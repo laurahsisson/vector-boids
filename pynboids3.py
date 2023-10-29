@@ -8,7 +8,7 @@ Uses numpy array math instead of math lib, more efficient.
 Copyright (c) 2021  Nikolaus Stromberg  nikorasu85@gmail.com
 '''
 FLLSCRN = True          # True for Fullscreen, or False for Window
-BOIDZ = 300            # How many boids to spawn, too many may slow fps
+BOIDZ = 100            # How many boids to spawn, too many may slow fps
 WRAP = True            # False avoids edges, True wraps to other side
 FISH = False            # True to turn boids into fish
 WIDTH = 1200            # Window Width (1200)
@@ -42,7 +42,7 @@ class Boid(pg.sprite.Sprite):
             pg.draw.polygon(self.image, self.color, ((7,0),(12,5),(3,14),(11,14),(2,5),(7,0)), width=3)
             self.image = pg.transform.scale(self.image, (16, 24))
         else : pg.draw.polygon(self.image, self.color, ((7,0), (13,14), (7,11), (1,14), (7,0)))
-        self.neighbSize = 60
+        self.neighbSize = 10
         self.orig_image = pg.transform.rotate(self.image.copy(), -90)
         self.dir = pg.Vector2(1, 0)  # sets up forward direction
         maxW, maxH = self.drawSurf.get_size()
@@ -58,59 +58,72 @@ class Boid(pg.sprite.Sprite):
     def draw_to(self,pos):
         pg.draw.line(self.drawSurf, self.color, self.pos, pg.Vector2(pos[0],pos[1]), width=1)
 
-    def do_separate(self, myPos, otherPos):
-        deltas = otherPos-myPos
+    def normalize_vector(self,vector):
+        if np.linalg.norm(vector) == 0:
+            return np.zeros((2,))
+
+        return vector / np.linalg.norm(vector)
+
+    def do_separate(self, myPos, see_mask, otherPos):
+        canSee, deltas = see_mask
         dists = np.expand_dims(np.linalg.norm(deltas,axis=1),-1) + 1e-6
-        isNeighb = dists < self.neighbSize
-        normdeltas = deltas * isNeighb / dists
+        normdeltas = deltas * canSee / dists
 
 
         expdeltas = normdeltas / (dists**2)
 
         sepforce = -1*expdeltas.sum(axis=0)
-
-        # for i,d in enumerate(expdeltas):
-        #     if should_sep[i]:
-        #         self.draw_delta(d*10)
-
         return sepforce
-      
 
-    def do_cohere(self, myPos, otherPos):
-        deltas = otherPos-myPos
-        dists = np.expand_dims(np.linalg.norm(deltas,axis=1),-1) + 1e-6
-        isNeighb = dists < self.neighbSize
-        neighbPos = otherPos * isNeighb  
+    def do_cohere(self, myPos, see_mask, otherPos):
+        canSee, deltas = see_mask
 
-
-        if isNeighb.sum() == 0:
+        if canSee.sum() == 0:
             return np.zeros((2,))
 
-        neighbCenter = neighbPos.sum(axis=0) / isNeighb.sum()
+        neighbPos = otherPos * canSee  
+
+        if canSee.sum() == 0:
+            return np.zeros((2,))
+
+        neighbCenter = neighbPos.sum(axis=0) / canSee.sum()
 
         toNeighbCenter =  neighbCenter - myPos
 
-        if np.linalg.norm(toNeighbCenter) == 0:
+        return self.normalize_vector(toNeighbCenter)
+
+    def do_align(self, myPos, see_mask, otherPos, otherForce):
+        canSee, deltas = see_mask
+
+        if canSee.sum() == 0:
             return np.zeros((2,))
 
-        return toNeighbCenter / np.linalg.norm(toNeighbCenter)
+        neighbForces = otherForce * canSee
+        alignForce = neighbForces.sum(axis=0) / canSee.sum()
 
-    def do_align(self, myPos, otherPos, otherForce):
+        return self.normalize_vector(alignForce)
+
+    def see_mask(self, myPos, meforce, otherPos):
         deltas = otherPos-myPos
         dists = np.expand_dims(np.linalg.norm(deltas,axis=1),-1) + 1e-6
+        
         isNeighb = dists < self.neighbSize
 
-        if isNeighb.sum() == 0:
-            return np.zeros((2,))
+        cos_sim = np.dot(deltas,meforce)/(np.linalg.norm(deltas)*np.linalg.norm(meforce))
+        canSee = np.expand_dims(cos_sim > 0,-1)
 
-        neighbForces = otherForce * isNeighb
-        alignForce = neighbForces.sum(axis=0) / isNeighb.sum()
+        seeDeltas = deltas*canSee*isNeighb
+        # if self.bnum < 25:
+        #     for d in seeDeltas:
+        #         self.draw_delta(d*.33)
 
+        return (canSee, deltas)
 
-        if np.linalg.norm(alignForce) == 0:
-            return np.zeros((2,))
-
-        return alignForce / np.linalg.norm(alignForce)
+    def normalize_random(self,vector):
+        if not np.linalg.norm(vector):
+            return (2*np.random.random_sample((2,)))-1
+        else:
+            return vector / np.linalg.norm(vector)
 
     def update(self, dt, speed, ejWrap=False):
         # pg.draw.line(self.drawSurf, self.color, self.pos, pg.Vector2(self.pos[0],self.pos[1]+25), width=1)
@@ -122,29 +135,22 @@ class Boid(pg.sprite.Sprite):
 
         myPos = np.array([self.pos[0],self.pos[1]])
 
-        sepforce = self.do_separate(myPos, otherPos)
-        cohforce = self.do_cohere(myPos, otherPos)
-        align = self.do_align(myPos, otherPos, otherForce)
-        # if self.bnum == 0:
-        #     print(np.linalg.norm(sepforce))
-        #     print(np.linalg.norm(cohforce))
-        #     print()
-        # self.draw_delta(sepforce*100)
-        # self.draw_delta(cohforce*100)
-
         meforce = self.data.forces[self.bnum]
-        if not np.linalg.norm(meforce):
-            meforce = np.zeros((2,))
-        else:
-            meforce = meforce / np.linalg.norm(meforce)
+        meforce = self.normalize_random(meforce)
+
+        if self.bnum < 10:
+            self.draw_delta(meforce*100)
+
+        see_mask = self.see_mask(myPos, meforce, otherPos)
+
+        sepforce = self.do_separate(myPos, see_mask, otherPos)
+        cohforce = self.do_cohere(myPos, see_mask, otherPos)
+        align = self.do_align(myPos, see_mask, otherPos, otherForce)
 
         allforce = meforce + 500 * sepforce + cohforce + 5 * align
 
-        fnorm = np.linalg.norm(allforce)
-        if fnorm:
-            allforce = allforce / np.linalg.norm(allforce)
-        else:
-            allforce = np.zeros((2,))
+        # allforce = meforce
+        allforce = self.normalize_random(allforce)
 
         myPos += allforce * dt * speed
 
