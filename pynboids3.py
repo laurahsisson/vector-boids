@@ -8,13 +8,13 @@ Uses numpy array math instead of math lib, more efficient.
 Copyright (c) 2021  Nikolaus Stromberg  nikorasu85@gmail.com
 '''
 FLLSCRN = True          # True for Fullscreen, or False for Window
-BOIDZ = 100            # How many boids to spawn, too many may slow fps
+BOIDZ = 300            # How many boids to spawn, too many may slow fps
 WRAP = True            # False avoids edges, True wraps to other side
 FISH = False            # True to turn boids into fish
 WIDTH = 1200            # Window Width (1200)
 HEIGHT = 800            # Window Height (800)
 BGCOLOR = (0, 0, 0)     # Background color in RGB
-SHOWFPS = False         # show frame rate
+SHOWFPS = True         # show frame rate
 
 
 DEBUG = False
@@ -42,7 +42,7 @@ class Boid(pg.sprite.Sprite):
             pg.draw.polygon(self.image, self.color, ((7,0),(12,5),(3,14),(11,14),(2,5),(7,0)), width=3)
             self.image = pg.transform.scale(self.image, (16, 24))
         else : pg.draw.polygon(self.image, self.color, ((7,0), (13,14), (7,11), (1,14), (7,0)))
-        self.neighbSize = 10
+        self.neighbSize = 80
         self.orig_image = pg.transform.rotate(self.image.copy(), -90)
         self.dir = pg.Vector2(1, 0)  # sets up forward direction
         maxW, maxH = self.drawSurf.get_size()
@@ -110,12 +110,9 @@ class Boid(pg.sprite.Sprite):
         isNeighb = dists < self.neighbSize
 
         cos_sim = np.dot(deltas,meforce)/(np.linalg.norm(deltas)*np.linalg.norm(meforce))
-        canSee = np.expand_dims(cos_sim > 0,-1)
+        canSee = np.expand_dims(cos_sim > 0,-1)*isNeighb
 
-        seeDeltas = deltas*canSee*isNeighb
-        # if self.bnum < 25:
-        #     for d in seeDeltas:
-        #         self.draw_delta(d*.33)
+        seeDeltas = deltas*canSee
 
         return (canSee, deltas)
 
@@ -138,18 +135,17 @@ class Boid(pg.sprite.Sprite):
         meforce = self.data.forces[self.bnum]
         meforce = self.normalize_random(meforce)
 
-        if self.bnum < 10:
-            self.draw_delta(meforce*100)
+        # if self.bnum < 10:
+        #     self.draw_delta(meforce*100)
 
         see_mask = self.see_mask(myPos, meforce, otherPos)
 
         sepforce = self.do_separate(myPos, see_mask, otherPos)
         cohforce = self.do_cohere(myPos, see_mask, otherPos)
-        align = self.do_align(myPos, see_mask, otherPos, otherForce)
+        alignforce = self.do_align(myPos, see_mask, otherPos, otherForce)
 
-        allforce = meforce + 500 * sepforce + cohforce + 5 * align
+        allforce = 100*meforce + 500 * sepforce + cohforce + 5 * alignforce
 
-        # allforce = meforce
         allforce = self.normalize_random(allforce)
 
         myPos += allforce * dt * speed
@@ -167,6 +163,8 @@ class Boid(pg.sprite.Sprite):
         self.rect.center = self.pos
 
 
+        self.ang = np.rad2deg(np.arctan2(allforce[1],allforce[0]))
+        self.image = pg.transform.rotate(self.orig_image, -self.ang)
 
 
         # Finally, output pos/ang to array
