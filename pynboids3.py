@@ -88,7 +88,7 @@ class Boid(pg.sprite.Sprite):
 
         neighbCenter = neighbPos.sum(axis=0) / canSee.sum()
 
-        toNeighbCenter =  neighbCenter - myPos
+        toNeighbCenter = neighbCenter - myPos
 
         return self.normalize_vector(toNeighbCenter)
 
