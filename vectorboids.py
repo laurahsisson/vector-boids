@@ -26,11 +26,11 @@ if DEBUG:
     NEIGHBSIZE = 100000
     SEPFORCE = 10000
 else:
-    SPEED = 30
+    SPEED = 100
     FPS = 60
-    BOIDZ = 100
+    BOIDZ = 1000
     NEIGHBSIZE = 80
-    SEPFORCE = 500
+    SEPFORCE = 1000
 
 
 
@@ -68,39 +68,11 @@ class Boid(pg.sprite.Sprite):
     def draw_to(self,pos):
         pg.draw.line(self.drawSurf, self.color, self.pos, pg.Vector2(pos[0],pos[1]), width=1)
 
-    def normalize_vector(self,vector):
-        if torch.linalg.norm(vector) == 0:
-            return torch.zeros((2,))
-
-        return vector / torch.linalg.norm(vector)
-
-    def do_cohere(self, myPos, see_mask, otherPos):
-        canSee, deltas = see_mask
-
-        if canSee.sum() == 0:
-            return torch.zeros((2,))
-
-        neighbPos = otherPos * canSee  
-
-        if canSee.sum() == 0:
-            return torch.zeros((2,))
-
-        neighbCenter = neighbPos.sum(axis=0) / canSee.sum()
-
-        toNeighbCenter =  neighbCenter - myPos
-
-        return self.normalize_vector(toNeighbCenter)
-
-    def do_align(self, myPos, see_mask, otherPos, otherForce):
-        canSee, deltas = see_mask
-
-        if canSee.sum() == 0:
-            return torch.zeros((2,))
-
-        neighbForces = otherForce * canSee
-        alignForce = neighbForces.sum(axis=0) / canSee.sum()
-
-        return self.normalize_vector(alignForce)
+    def average_force(self,force,affect_count):
+        force_avg = force.sum(axis=1) / affect_count
+        # If there are no neighbors, we will divide by 0 (resulting in nan).
+        # Replace those with 0.0 so that we have no cohere force.
+        return torch.nan_to_num(force_avg,nan=0.0)
 
     def see_mask_v(self,positions,forces,debug=False):
         # Need to do like a diagonal 0.
@@ -111,32 +83,33 @@ class Boid(pg.sprite.Sprite):
         assert torch.all(deltas[0,1] == positions[1] - positions[0])
         
         isNeighb = dists < self.neighbSize
-        cos_sim = torch.nn.functional.cosine_similarity(deltas,forces.unsqueeze(1),dim=-1)
-        # 180 degree vision
-        canSee = (cos_sim > 0)
+
+        # We should not be our own neighbor, or see our own selves.
+        self_attn = 1 - torch.eye(len(deltas))
+        isNeighb = isNeighb * self_attn
 
         if debug:
             i = 0
             for j in range(len(self.data.boidz)):
-                if canSee[i,j]:
+                if isNeighb[i,j]:
                     self.draw_delta(deltas[i,j])
 
             for x, b in enumerate(self.data.boidz):
                 b.draw_delta(forces[x])
 
-        return (deltas, canSee.unsqueeze(-1), isNeighb.unsqueeze(-1), dists.unsqueeze(-1))
+        return (deltas, isNeighb.unsqueeze(-1), dists.unsqueeze(-1))
 
 
-    def do_separate_v(self, see_mask, positions):
-        deltas, canSee, isNeighb, dists = see_mask
+    def do_separate_v(self, see_mask, positions, validate=False):
+        deltas, isNeighb, dists = see_mask
 
         normdeltas = deltas / dists
+        
+        if validate:
+            # Diagonals will all be 0, otherwise, the norm of the vectors will be 1.
+            norms = torch.linalg.norm(normdeltas,axis=-1)
+            assert torch.all(torch.logical_or(torch.isclose(norms,torch.tensor(1.0)), torch.isclose(norms,torch.tensor(0.0))))
 
-        # Diagonals will all be 0, otherwise, the norm of the vectors will be 1.
-        norms = torch.linalg.norm(normdeltas,axis=-1)
-        assert torch.all(torch.logical_or(torch.isclose(norms,torch.tensor(1.0)), torch.isclose(norms,torch.tensor(0.0))))
-
-        # Separate is not affected by line of sight.
         normdeltas = normdeltas * isNeighb      
 
         expdeltas = normdeltas / torch.square(dists)
@@ -145,24 +118,21 @@ class Boid(pg.sprite.Sprite):
 
         return sepforce
 
+
     def do_cohere_v(self, see_mask, positions, debug=False):
-        deltas, canSee, isNeighb, dists = see_mask
+        deltas, isNeighb, dists = see_mask
 
-        affected = (canSee * isNeighb)
-        affect_count = affected.sum(axis=0)
         
-        neighb_deltas = deltas * affected
+        neighb_deltas = deltas * isNeighb
 
-        to_neighb_center = neighb_deltas.sum(axis=1) / affect_count
-        # If there are no neighbors, we will divide by 0 (resulting in nan).
-        # Replace those with 0.0 so that we have no cohere force.
-        to_neighb_center = torch.nan_to_num(to_neighb_center,nan=0.0)
+        affect_count = isNeighb.sum(axis=0)
+        to_neighb_center = self.average_force(neighb_deltas,affect_count)
 
 
         if debug:
             i = 0
             for j in range(len(self.data.boidz)):
-                if affected[i,j]:
+                if isNeighb[i,j]:
                     self.draw_delta(neighb_deltas[i,j])
 
             for x, b in enumerate(self.data.boidz):
@@ -172,23 +142,16 @@ class Boid(pg.sprite.Sprite):
         return torch.nn.functional.normalize(to_neighb_center,dim=-1)
 
     def do_align_v(self, see_mask, positions, forces, debug=False):
-        deltas, canSee, isNeighb, dists = see_mask
+        deltas, isNeighb, dists = see_mask
 
-        affected = (canSee * isNeighb)
-        affect_count = affected.sum(axis=0)
-        
-        neighb_forces = forces * affected
-
-        total_forces = neighb_forces.sum(axis=1) / affect_count
-        # If there are no neighbors, we will divide by 0 (resulting in nan).
-        # Replace those with 0.0 so that we have no cohere force.
-        total_forces = torch.nan_to_num(total_forces,nan=0.0)
-
+        neighb_forces = forces * isNeighb
+        affect_count = isNeighb.sum(axis=0)
+        total_forces = self.average_force(neighb_forces,affect_count)
 
         if debug:
             i = 0
             for j in range(len(self.data.boidz)):
-                if affected[i,j]:
+                if isNeighb[i,j]:
                     self.draw_delta(neighb_forces[i,j]*100)
 
             for x, b in enumerate(self.data.boidz):
@@ -208,12 +171,19 @@ class Boid(pg.sprite.Sprite):
         cohforce = self.do_cohere_v(see_mask, positions)
         aliforce = self.do_align_v(see_mask, positions, forces)
 
-        allforce = 5*forces + SEPFORCE*sepforce + 1*cohforce + aliforce
+        allforce = 5*forces + SEPFORCE*sepforce + 2*cohforce + aliforce
  
         allforce = torch.nn.functional.normalize(allforce,dim=-1)
         positions += allforce * dt * speed
 
         angles = torch.rad2deg(torch.atan2(allforce[:,1],allforce[:,0]))
+
+        maxW, maxH = self.drawSurf.get_size()
+        # Wrap x
+        positions[:,0] = positions[:,0] % maxW
+        # Wrap y
+        positions[:,1] = positions[:,1] % maxH
+
         self.data.array[:,:2] = positions
         self.data.array[:,2] = angles
         self.data.forces = forces
