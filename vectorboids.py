@@ -28,7 +28,7 @@ if DEBUG:
 else:
     SPEED = 30
     FPS = 60
-    BOIDZ = 150
+    BOIDZ = 100
     NEIGHBSIZE = 80
     SEPFORCE = 500
 
@@ -159,13 +159,25 @@ class Boid(pg.sprite.Sprite):
         positions += allforce * dt * speed
 
 
+
+
+
+
+
+
+        angles = torch.rad2deg(torch.atan2(allforce[:,1],allforce[:,0]))
+        self.data.array[:,:2] = positions
+        self.data.array[:,2] = angles
+        self.data.forces = forces
+
         # Update data
         for i, b in enumerate(self.data.boidz):
             b.pos = pg.Vector2(positions[i,0],positions[i,1])
             b.draw_delta(allforce[i]*100)
             b.rect.center = b.pos
+            b.image = pg.transform.rotate(b.orig_image, -angles[i])
 
-        self.data.array[:,:2] = positions
+
 
 
 
