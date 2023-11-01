@@ -122,8 +122,17 @@ class Boid(pg.sprite.Sprite):
         assert torch.all(deltas[0,1] == positions[1] - positions[0])
         
         isNeighb = dists < self.neighbSize
-        cos_sim = torch.nn.functional.cosine_similarity(deltas,forces,dim=-1)
+        cos_sim = torch.nn.functional.cosine_similarity(deltas,forces.unsqueeze(1),dim=-1)
+        # 180 degree vision
         canSee = (cos_sim > 0)
+
+        # i = 0
+        # for j in range(len(self.data.boidz)):
+        #     if canSee[i,j]:
+        #         self.draw_delta(deltas[i,j])
+
+        # for x, b in enumerate(self.data.boidz):
+        #     b.draw_delta(forces[x])
 
         return (canSee, isNeighb, deltas, dists)
 
@@ -154,16 +163,10 @@ class Boid(pg.sprite.Sprite):
         
         sepforce = self.do_separate_v(see_mask,positions)
 
-        allforce = SEPFORCE*sepforce
+        allforce = 1*forces + SEPFORCE*sepforce
 
+        allforce = torch.nn.functional.normalize(allforce,dim=-1)
         positions += allforce * dt * speed
-
-
-
-
-
-
-
 
         angles = torch.rad2deg(torch.atan2(allforce[:,1],allforce[:,0]))
         self.data.array[:,:2] = positions
