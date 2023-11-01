@@ -9,7 +9,6 @@ Uses numpy array math instead of math lib, more efficient.
 Copyright (c) 2021  Nikolaus Stromberg  nikorasu85@gmail.com
 '''
 FLLSCRN = True          # True for Fullscreen, or False for Window
-BOIDZ = 200            # How many boids to spawn, too many may slow fps
 WRAP = True            # False avoids edges, True wraps to other side
 FISH = False            # True to turn boids into fish
 WIDTH = 1200            # Window Width (1200)
@@ -21,11 +20,19 @@ SHOWFPS = True         # show frame rate
 DEBUG = False
 
 if DEBUG:
-    SPEED = 1e-10             # Movement speed
-    FPS = 1                # 30-90
+    SPEED = 30            # Movement speed
+    FPS = 15                # 30-90
+    BOIDZ = 100
+    NEIGHBSIZE = 100000
+    SEPFORCE = 10000
 else:
-    SPEED = 150
+    SPEED = 30
     FPS = 60
+    BOIDZ = 150
+    NEIGHBSIZE = 80
+    SEPFORCE = 500
+
+
 
 
 
@@ -43,7 +50,7 @@ class Boid(pg.sprite.Sprite):
             pg.draw.polygon(self.image, self.color, ((7,0),(12,5),(3,14),(11,14),(2,5),(7,0)), width=3)
             self.image = pg.transform.scale(self.image, (16, 24))
         else : pg.draw.polygon(self.image, self.color, ((7,0), (13,14), (7,11), (1,14), (7,0)))
-        self.neighbSize = 80
+        self.neighbSize = NEIGHBSIZE
         self.orig_image = pg.transform.rotate(self.image.copy(), -90)
         self.dir = pg.Vector2(1, 0)  # sets up forward direction
         maxW, maxH = self.drawSurf.get_size()
@@ -51,6 +58,8 @@ class Boid(pg.sprite.Sprite):
         self.ang = randint(0, 360)  # random start angle, & position ^
         self.pos = pg.Vector2(self.rect.center)
         self.data.array[self.bnum,:3] = torch.tensor([self.pos[0], self.pos[1], self.ang])
+        self.data.forces[self.bnum] = (2*torch.rand((2,)))-1
+        self.data.boidz[self.bnum] = self
     
 
     def draw_delta(self,delta):
@@ -68,14 +77,10 @@ class Boid(pg.sprite.Sprite):
     def do_separate(self, myPos, see_mask, otherPos):
         canSee, deltas = see_mask
         dists = torch.linalg.norm(deltas,axis=1).unsqueeze(-1) + 1e-6
-
-        normdeltas = deltas * canSee / dists
+        normdeltas = deltas / dists
 
 
         expdeltas = normdeltas / (dists**2)
-        print(expdeltas.shape)
-        print(dists.shape)
-        exit()
 
         sepforce = -1*expdeltas.sum(axis=0)
         return sepforce
@@ -108,81 +113,71 @@ class Boid(pg.sprite.Sprite):
 
         return self.normalize_vector(alignForce)
 
-    def see_mask(self, myPos, meforce, otherPos):
-        deltas = otherPos-myPos
-        dists = torch.linalg.norm(deltas,axis=1).unsqueeze(-1) + 1e-6
+    def see_mask_v(self,positions,forces):
+        # Need to do like a diagonal 0.
+        deltas = positions.unsqueeze(0) - positions.unsqueeze(1)
+        dists = torch.linalg.norm(deltas,axis=-1) + 1e-6
+
+        # deltas i, j is delta from i to j (j.pos - i.pos)
+        assert torch.all(deltas[0,1] == positions[1] - positions[0])
         
         isNeighb = dists < self.neighbSize
+        cos_sim = torch.nn.functional.cosine_similarity(deltas,forces,dim=-1)
+        canSee = (cos_sim > 0)
 
-        cos_sim = torch.mv(deltas,meforce)/(torch.linalg.norm(deltas)*torch.linalg.norm(meforce))
-        canSee = (cos_sim > 0).unsqueeze(-1)*isNeighb
+        return (canSee, isNeighb, deltas, dists)
 
-        seeDeltas = deltas*canSee
 
-        return (canSee, deltas)
+    def do_separate_v(self, see_mask, positions):
+        canSee, isNeighb, deltas, dists = see_mask
 
-    def normalize_random(self,vector):
-        if not torch.linalg.norm(vector):
-            return (2*torch.rand((2,)))-1
-        else:
-            return vector / torch.linalg.norm(vector)
+        normdeltas = deltas / dists.unsqueeze(-1)
+
+        # Diagonals will all be 0, otherwise, the norm of the vectors will be 1.
+        norms = torch.linalg.norm(normdeltas,axis=-1)
+        assert torch.all(torch.logical_or(torch.isclose(norms,torch.tensor(1.0)), torch.isclose(norms,torch.tensor(0.0))))
+
+        # Separate is not affected by line of sight.
+        normdeltas = normdeltas * isNeighb.unsqueeze(-1)      
+
+        expdeltas = normdeltas / torch.square(dists.unsqueeze(-1))
+
+        sepforce = -1*expdeltas.sum(axis=1)
+        return sepforce
 
     def update(self, dt, speed, ejWrap=False):
-        # pg.draw.line(self.drawSurf, self.color, self.pos, pg.Vector2(self.pos[0],self.pos[1]+25), width=1)
-        otherPos = np.delete(self.data.array, self.bnum, 0)
-        # Only need the first two dimensions for x,y
-        otherPos = otherPos[:,:2]
+        if self.bnum != 0:
+            return
 
-        otherForce = np.delete(self.data.forces, self.bnum, 0)
-        # Only need the first two dimensions for x,y
-        otherForce = otherPos[:,:2]
-
-        myPos = torch.tensor([self.pos[0],self.pos[1]]).float()
-
-        meforce = self.data.forces[self.bnum]
-        meforce = self.normalize_random(meforce)
-
-        # if self.bnum < 10:
-        #     self.draw_delta(meforce*100)
-
-        see_mask = self.see_mask(myPos, meforce, otherPos)
-
-        sepforce = self.do_separate(myPos, see_mask, otherPos)
-        cohforce = self.do_cohere(myPos, see_mask, otherPos)
-        alignforce = self.do_align(myPos, see_mask, otherPos, otherForce)
-
-        allforce = 100*meforce + 500 * sepforce + cohforce + 5 * alignforce
-
-        allforce = self.normalize_random(allforce)
-
-        myPos += allforce * dt * speed
-
-        # Actually update position of boid
-        self.pos = pg.Vector2(myPos[0],myPos[1])
+        positions, forces = self.data.array[:,:2], self.data.forces
+        see_mask = self.see_mask_v(positions,forces)
         
-        maxW, maxH = self.drawSurf.get_size()
-        if ejWrap and not self.drawSurf.get_rect().contains(self.rect):
-            if self.rect.bottom < 0 : self.pos.y = maxH - 10
-            elif self.rect.top > maxH : self.pos.y = 10
-            if self.rect.right < 0 : self.pos.x = maxW - 10
-            elif self.rect.left > maxW : self.pos.x = 10
+        sepforce = self.do_separate_v(see_mask,positions)
 
-        self.rect.center = self.pos
+        allforce = SEPFORCE*sepforce
+
+        positions += allforce * dt * speed
 
 
-        self.ang = np.rad2deg(np.arctan2(allforce[1],allforce[0]))
-        self.image = pg.transform.rotate(self.orig_image, -self.ang)
+        # Update data
+        for i, b in enumerate(self.data.boidz):
+            b.pos = pg.Vector2(positions[i,0],positions[i,1])
+            b.draw_delta(allforce[i]*100)
+            b.rect.center = b.pos
+
+        self.data.array[:,:2] = positions
 
 
-        # Finally, output pos/ang to array
-        self.data.array[self.bnum,:3] = torch.tensor([self.pos[0], self.pos[1], self.ang]).float()
-        self.data.forces[self.bnum] = allforce
+
+
+
 
 
 class BoidArray():  # Holds array to store positions and angles
     def __init__(self):
-        self.array = torch.zeros((BOIDZ, 4))
+        self.array = torch.zeros((BOIDZ, 3))
         self.forces = torch.zeros((BOIDZ, 2))
+        self.boidz = [None]*BOIDZ
 
 def main():
     pg.init()  # prepare window
