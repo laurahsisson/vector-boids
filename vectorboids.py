@@ -3,6 +3,7 @@ from random import randint
 import pygame as pg
 import torch
 import numpy as np
+import math
 '''
 PyNBoids - a Boids simulation - github.com/Nikorasu/PyNBoids
 Uses numpy array math instead of math lib, more efficient.
@@ -16,8 +17,6 @@ HEIGHT = 800  # Window Height (800)
 BGCOLOR = (0, 0, 0)  # Background color in RGB
 SHOWFPS = True  # show frame rate
 
-bonus_factor = 1
-
 DEBUG = False
 if DEBUG:
     SPEED = 0  # Movement speed
@@ -25,13 +24,14 @@ if DEBUG:
     BOIDZ = 150
     NEIGHBSIZE = 80
 else:
-    SPEED = 150
+    SPEED = 300
     FPS = 60
-    BOIDZ = 150
-    NEIGHBSIZE = 50
+    BOIDZ = 300
+    NEIGHBSIZE = 80
 
-SEPSIZE = NEIGHBSIZE
+SEPSIZE = 30
 
+COHESION_F = .6
 
 class Boid(pg.sprite.Sprite):
 
@@ -157,7 +157,7 @@ class Boid(pg.sprite.Sprite):
 
     def do_cohere_v(self, see_mask, deltas, debug=False):
         isNeighb, canSee = see_mask
-        neighb_deltas = deltas * isNeighb
+        neighb_deltas = deltas * isNeighb * canSee
 
         affect_count = isNeighb.sum(axis=0)
         to_neighb_center = self.average_force(neighb_deltas, affect_count)
@@ -177,7 +177,7 @@ class Boid(pg.sprite.Sprite):
     def do_align_v(self, see_mask, forces, debug=False):
         isNeighb, canSee = see_mask
 
-        neighb_forces = forces * isNeighb 
+        neighb_forces = forces * isNeighb * canSee
         affect_count = isNeighb.sum(axis=0)
         total_forces = self.average_force(neighb_forces, affect_count)
 
@@ -211,17 +211,20 @@ class Boid(pg.sprite.Sprite):
         see_mask = self.see_mask(forces, deltas, dists,
                                  self.neighbSize)
 
-        sepforce = self.do_separate_v(see_mask, deltas, dists)
+        sep_mask = self.see_mask(forces, deltas, dists,
+                                 self.sepSize)
+
+        sepforce = self.do_separate_v(sep_mask, deltas, dists)
 
         
         cohforce = self.do_cohere_v(see_mask, deltas)
         aliforce = self.do_align_v(see_mask, forces)
 
         # For moments where 
-        acceleration = self.clamp_norm(10 * sepforce + 5 * cohforce + 5*aliforce)
+        acceleration = self.clamp_norm((1) * sepforce + COHESION_F * cohforce + (1-COHESION_F)*aliforce)
 
         # allforce = torch.nn.functional.normalize(allforce,dim=-1)
-        forces = torch.nn.functional.normalize(forces + 10*dt*acceleration)
+        forces = torch.nn.functional.normalize(forces + math.sqrt(speed)*dt*acceleration)
         
         positions += forces * dt * speed
 
