@@ -26,9 +26,9 @@ if DEBUG:
     BOIDZ = 150
     NEIGHBSIZE = 80
 else:
-    SPEED = 80
+    SPEED = 150
     FPS = 60
-    BOIDZ = 200
+    BOIDZ = 300
     NEIGHBSIZE = 60
 
 
@@ -100,17 +100,15 @@ class Boid(pg.sprite.Sprite):
                  deltas,
                  dists,
                  size,
-                 use_vision=True,
-                 invert=False):
+                 use_vision=True):
         isNeighb = dists < size
-
-        if invert:
-            isNeighb = ~isNeighb
 
         # We should not be our own neighbor
         self_attn = 1 - torch.eye(len(deltas))
         isNeighb = isNeighb * self_attn
 
+        # Without vision, large flocks thats collide tend to merge
+        # Whereas with vision, large flocks have some collective momentum
         if use_vision:
             cos_sim = torch.nn.functional.cosine_similarity(deltas,forces.unsqueeze(1),
                                                             dim=-1)
@@ -159,13 +157,7 @@ class Boid(pg.sprite.Sprite):
     def do_cohere_v(self, forces, deltas, dists, debug=False):
         isNeighb = self.see_mask(forces, deltas, dists,
                                  self.neighbSize).unsqueeze(-1)
-        shouldSep = self.see_mask(forces,
-                                  deltas,
-                                  dists,
-                                  self.sepSize * bonus_factor,
-                                  invert=True).unsqueeze(-1)
-
-        neighb_deltas = deltas * isNeighb * shouldSep
+        neighb_deltas = deltas * isNeighb
 
         affect_count = isNeighb.sum(axis=0)
         to_neighb_center = self.average_force(neighb_deltas, affect_count)
@@ -220,13 +212,15 @@ class Boid(pg.sprite.Sprite):
         cohforce = self.do_cohere_v(forces, deltas, dists)
         aliforce = self.do_align_v(forces, deltas, dists)
 
-        allforce = self.clamp_norm(20 * sepforce + 2 * cohforce + 10*aliforce)
-        # allforce = torch.nn.functional.normalize(allforce,dim=-1)
-        allforce = torch.nn.functional.normalize(forces + dt*allforce)
-        
-        positions += allforce * dt * speed
+        # For moments where 
+        acceleration = self.clamp_norm(20 * sepforce + 2 * cohforce + 10*aliforce)
 
-        angles = torch.rad2deg(torch.atan2(allforce[:, 1], allforce[:, 0]))
+        # allforce = torch.nn.functional.normalize(allforce,dim=-1)
+        forces = torch.nn.functional.normalize(forces + 10*dt*acceleration)
+        
+        positions += forces * dt * speed
+
+        angles = torch.rad2deg(torch.atan2(forces[:, 1], forces[:, 0]))
 
         maxW, maxH = self.drawSurf.get_size()
         # Wrap x
@@ -236,15 +230,14 @@ class Boid(pg.sprite.Sprite):
 
         self.data.array[:, :2] = positions
         self.data.array[:, 2] = angles
-        self.data.forces = allforce
+        self.data.forces = forces
 
         # Update data
         for i, b in enumerate(self.data.boidz):
             b.pos = pg.Vector2(positions[i, 0], positions[i, 1])
-            # b.draw_delta( 30*(10 * sepforce[i] + 2 * cohforce[i]))
-            b.draw_delta(aliforce[i] * 100)
             b.rect.center = b.pos
             b.image = pg.transform.rotate(b.orig_image, -angles[i])
+            # b.draw_delta(acceleration[i]*100)
 
 
 class BoidArray():  # Holds array to store positions and angles
