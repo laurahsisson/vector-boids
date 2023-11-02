@@ -4,6 +4,7 @@ import pygame as pg
 import torch
 import numpy as np
 import math
+import flocking
 '''
 VectorBoids - Multidimensional Boid Simulation in Pytorch
 Simulation by Laura Sisson
@@ -40,18 +41,20 @@ WRAP_EXTRA_DIM = 100
 
 class Boid(pg.sprite.Sprite):
 
-    def __init__(self, boidNum, data, drawSurf, isFish=False, cHSV=None):
+    def __init__(self, boidNum, data, drawSurf, cHSV=None):
         super().__init__()
         self.data = data
         self.bnum = boidNum
         self.drawSurf = drawSurf
+
         self.image = pg.Surface((15, 15)).convert()
         self.image.set_colorkey(0)
         self.color = pg.Color(0)  # preps color so we can use hsva
         self.color.hsva = (
             randint(0, 360), 25,
             100) if cHSV is None else cHSV  # randint(5,55) #4goldfish
-        if isFish:  # (randint(120,300) + 180) % 360  #4noblues
+
+        if FISH:  # (randint(120,300) + 180) % 360  #4noblues
             pg.draw.polygon(self.image,
                             self.color, ((7, 0), (12, 5), (3, 14), (11, 14),
                                          (2, 5), (7, 0)),
@@ -60,20 +63,15 @@ class Boid(pg.sprite.Sprite):
         else:
             pg.draw.polygon(self.image, self.color,
                             ((7, 0), (13, 14), (7, 11), (1, 14), (7, 0)))
-        self.neighbSize = NEIGHBSIZE
-        self.sepSize = SEPSIZE
+
         self.orig_image = pg.transform.rotate(self.image.copy(), -90)
-        self.dir = pg.Vector2(1, 0)  # sets up forward direction
         maxW, maxH = self.drawSurf.get_size()
         self.rect = self.image.get_rect(center=(randint(50, maxW - 50),
                                                 randint(50, maxH - 50)))
-        self.pos = pg.Vector2(self.rect.center)
-        twod_pos = torch.tensor([self.pos[0], self.pos[1]])
+        two_dim_pos = torch.tensor([self.rect.center[0], self.rect.center[1]])
+        higher_dim_pos = torch.rand(DIMENSION - 2)
 
-        random_dims = DIMENSION - 2
-        extra_pos = torch.rand(random_dims)
-        self.data.positions[self.bnum] = torch.cat([twod_pos,extra_pos])
-
+        self.data.positions[self.bnum] = torch.cat([two_dim_pos,higher_dim_pos])
         self.data.velocities[self.bnum] = (2 * torch.rand((DIMENSION, ))) - 1
         self.data.boidz[self.bnum] = self
 
@@ -88,114 +86,13 @@ class Boid(pg.sprite.Sprite):
         self.draw_to(pg.Vector2(self.pos[0] + delta[0],
                                 self.pos[1] + delta[1]))
 
-    def average_force(self, force, affect_count):
-        force_avg = force.sum(axis=1) / affect_count
-        # If there are no neighbors, we will divide by 0 (resulting in nan).
-        # Replace those with 0.0 so that we have no cohere force.
-        return torch.nan_to_num(force_avg, nan=0.0)
-
-    def deltas(self, positions):
-        deltas = positions.unsqueeze(0) - positions.unsqueeze(1)
-        dists = torch.linalg.norm(deltas, axis=-1) + 1e-6
-
-        return deltas, dists
-
-    def see_mask(self, velocities, deltas, dists, size, debug=False):
-
-        isNeighb = dists < size
-
-        # Without vision, large flocks thats collide tend to merge
-        # Whereas with vision, large flocks have some collective momentum
-        cos_sim = torch.nn.functional.cosine_similarity(
-            deltas, velocities.unsqueeze(1), dim=-1)
-        # 180 degree vision
-        canSee = (cos_sim > 0)
-
-        if debug:
-            d = isNeighb * canSee
-            for i in range(len(deltas)):
-                for j in range(len(deltas)):
-                    if (d[i, j]):
-                        self.data.boidz[i].draw_delta(deltas[i, j])
-
-        # We should not be our own neighbor
-        self_attn = 1 - torch.eye(len(deltas))
-
-        return (isNeighb * self_attn).unsqueeze(-1), (canSee *
-                                                      self_attn).unsqueeze(-1)
-
-    def clamp_norm(self, force):
-        norms = torch.linalg.norm(force, dim=-1, keepdim=True)
-        f_norm = torch.nan_to_num(force / norms, nan=0)
-        clamped_norm = torch.clamp(norms, min=0, max=1)
-        return f_norm * clamped_norm
-
-    def sum_neighborhood_effect(self,
-                                see_mask,
-                                effect,
-                                use_vison=True,
-                                debug=False):
-        isNeighb, canSee = see_mask
-
-        canEffect = isNeighb
-        if use_vison:
-            canEffect = canEffect * canSee
-
-        effect_count = canEffect.sum(axis=0)
-        neighb_effect = effect * canEffect
-
-        neighb_effect_sum = self.average_force(neighb_effect, effect_count)
-
-        if debug:
-            i = 0
-            for j in range(len(self.data.boidz)):
-                if isNeighb[i, j]:
-                    self.draw_delta(neighb_effect[i, j])
-
-            for x, b in enumerate(self.data.boidz):
-                if affect_count[x]:
-                    b.draw_delta(neighb_effect_sum[x])
-
-        return self.clamp_norm(neighb_effect_sum)
-
-    def do_separate_v(self, see_mask, deltas, dists, debug=False):
-        # normdeltas represents a normalized vector from the boid's position towards all neighbors
-        dists = dists.unsqueeze(-1)
-        normdeltas = deltas / dists
-
-        # subtracting that value from dists results in a repulsion
-        # that is stronger for nearer neighbors.
-        inverse_negative = dists - self.sepSize
-        negative_deltas = normdeltas * -1 * (inverse_negative *
-                                             inverse_negative)
-        return self.sum_neighborhood_effect(see_mask,
-                                            negative_deltas,
-                                            use_vison=False)
-
-    def update(self, dt, speed):
+    def update(self, dt):
+        # Only a single boid handles all calculations.
+        # Could def refactor this so that BoidArray does all this math.
         if self.bnum != 0:
             return
 
-        positions, velocities = self.data.positions, self.data.velocities
-
-        deltas, dists = self.deltas(positions)
-
-        sep_mask = self.see_mask(velocities, deltas, dists, self.sepSize)
-        sepforce = self.do_separate_v(sep_mask, deltas, dists)
-
-        coh_mask = self.see_mask(velocities, deltas, dists, self.neighbSize)
-        cohforce = self.sum_neighborhood_effect(coh_mask, deltas)
-        aliforce = self.sum_neighborhood_effect(coh_mask, velocities)
-
-        # For moments where the velocities cancel out, it is useful to use
-        # clamp norm instead of normalize (so that the norm can be <1)
-        accel_norm = self.clamp_norm((1) * sepforce + COHESION_F * cohforce +
-                                     (1 - COHESION_F) * aliforce)
-
-        acceleration = math.sqrt(speed) * dt * accel_norm
-        velocities = torch.nn.functional.normalize(velocities + acceleration)
-
-        positions += velocities * dt * speed
+        positions, velocities = self.data.flock_ensemble.do_physics_step(self.data.positions,self.data.velocities,dt)
 
         angles = torch.rad2deg(torch.atan2(velocities[:, 1], velocities[:, 0]))
 
@@ -212,8 +109,7 @@ class Boid(pg.sprite.Sprite):
 
         # Update data
         for i, b in enumerate(self.data.boidz):
-            b.pos = pg.Vector2(positions[i, 0], positions[i, 1])
-            b.rect.center = b.pos
+            b.rect.center = pg.Vector2(positions[i,0],positions[i,1])
             b.image = pg.transform.rotate(b.orig_image, -angles[i])
 
 
@@ -223,6 +119,7 @@ class BoidArray():  # Holds positions to store positions and angles
         self.positions = torch.zeros((BOIDZ, DIMENSION))
         self.velocities = torch.zeros((BOIDZ, DIMENSION))
         self.boidz = [None] * BOIDZ
+        self.flock_ensemble = flocking.FlockEnsemble(SPEED,NEIGHBSIZE,SEPSIZE,COHESION_F)
 
 
 def main():
@@ -243,8 +140,7 @@ def main():
     nBoids = pg.sprite.Group()
     dataArray = BoidArray()
     for n in range(BOIDZ):
-        nBoids.add(Boid(n, dataArray, screen,
-                        FISH))  # spawns desired # of boidz
+        nBoids.add(Boid(n, dataArray, screen))  # spawns desired # of boidz
 
     clock = pg.time.Clock()
     if SHOWFPS: font = pg.font.Font(None, 30)
@@ -257,7 +153,7 @@ def main():
 
         dt = clock.tick(FPS) / 1000
         screen.fill(BGCOLOR)
-        nBoids.update(dt, SPEED)
+        nBoids.update(dt)
         nBoids.draw(screen)
 
         if SHOWFPS:
