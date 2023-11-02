@@ -16,7 +16,6 @@ HEIGHT = 800  # Window Height (800)
 BGCOLOR = (0, 0, 0)  # Background color in RGB
 SHOWFPS = True  # show frame rate
 
-SEPSIZE = 20
 bonus_factor = 1
 
 DEBUG = False
@@ -28,8 +27,10 @@ if DEBUG:
 else:
     SPEED = 150
     FPS = 60
-    BOIDZ = 300
-    NEIGHBSIZE = 60
+    BOIDZ = 150
+    NEIGHBSIZE = 50
+
+SEPSIZE = NEIGHBSIZE
 
 
 class Boid(pg.sprite.Sprite):
@@ -99,46 +100,46 @@ class Boid(pg.sprite.Sprite):
                  forces,
                  deltas,
                  dists,
-                 size,
-                 use_vision=True):
-        isNeighb = dists < size
+                 size, debug=False):
 
-        # We should not be our own neighbor
-        self_attn = 1 - torch.eye(len(deltas))
-        isNeighb = isNeighb * self_attn
+        isNeighb = dists < size
 
         # Without vision, large flocks thats collide tend to merge
         # Whereas with vision, large flocks have some collective momentum
-        if use_vision:
-            cos_sim = torch.nn.functional.cosine_similarity(deltas,forces.unsqueeze(1),
-                                                            dim=-1)
-            # 180 degree vision
-            canSee = (cos_sim > 0)
-            isNeighb = isNeighb * canSee
+        cos_sim = torch.nn.functional.cosine_similarity(deltas,forces.unsqueeze(1),
+                                                        dim=-1)
+        # 180 degree vision
+        canSee = (cos_sim > 0)
 
-        # for j in range(len(self.data.boidz)):
-        #     if canSee[0,j]:
-        #         self.draw_delta(deltas[0,j])
-        # self.draw_delta(forces[0]*10000000)
+        if debug:
+            d = isNeighb*canSee
+            for i in range(len(deltas)):
+                for j in range(len(deltas)):
+                    if (d[i,j]):
+                        self.data.boidz[i].draw_delta(deltas[i,j])
 
 
-        return isNeighb
+        # We should not be our own neighbor
+        self_attn = 1 - torch.eye(len(deltas))
 
-    def do_separate_v(self, forces, deltas, dists, debug=False):
-        shouldSep = self.see_mask(forces, deltas, dists,
-                                  self.sepSize, use_vision=False).unsqueeze(-1)
+        return (isNeighb * self_attn).unsqueeze(-1), (canSee * self_attn).unsqueeze(-1)
+
+    def do_separate_v(self, see_mask, deltas, dists, debug=False):
+        isNeighb, canSee = see_mask
+
         dists = dists.unsqueeze(-1)
-
         normdeltas = deltas / dists
         inverse_negative = dists - self.sepSize
 
-        neighb_deltas = deltas * shouldSep
+        # Separation is not affected by vision.
+        neighb_deltas = deltas * isNeighb
+
         # neighb_deltas points from the boid's position towards all neighbors,
         # subtracting that value results in a repulsion
         # that is stronger for nearer neighbors.
-        negative_deltas = neighb_deltas * inverse_negative
+        negative_deltas = neighb_deltas * -1 * (inverse_negative * inverse_negative)
 
-        affect_count = shouldSep.sum(axis=0)
+        affect_count = isNeighb.sum(axis=0)
         away_from_neighb = self.average_force(negative_deltas, affect_count)
 
         if debug:
@@ -154,9 +155,8 @@ class Boid(pg.sprite.Sprite):
 
         return self.clamp_norm(away_from_neighb)
 
-    def do_cohere_v(self, forces, deltas, dists, debug=False):
-        isNeighb = self.see_mask(forces, deltas, dists,
-                                 self.neighbSize).unsqueeze(-1)
+    def do_cohere_v(self, see_mask, deltas, debug=False):
+        isNeighb, canSee = see_mask
         neighb_deltas = deltas * isNeighb
 
         affect_count = isNeighb.sum(axis=0)
@@ -174,11 +174,10 @@ class Boid(pg.sprite.Sprite):
 
         return self.clamp_norm(to_neighb_center)
 
-    def do_align_v(self, forces, deltas, dists, debug=False):
-        isNeighb = self.see_mask(forces, deltas, dists,
-                                 self.neighbSize).unsqueeze(-1)
+    def do_align_v(self, see_mask, forces, debug=False):
+        isNeighb, canSee = see_mask
 
-        neighb_forces = forces * isNeighb
+        neighb_forces = forces * isNeighb 
         affect_count = isNeighb.sum(axis=0)
         total_forces = self.average_force(neighb_forces, affect_count)
 
@@ -208,12 +207,18 @@ class Boid(pg.sprite.Sprite):
 
         deltas, dists = self.deltas(positions)
 
-        sepforce = self.do_separate_v(forces, deltas, dists)
-        cohforce = self.do_cohere_v(forces, deltas, dists)
-        aliforce = self.do_align_v(forces, deltas, dists)
+
+        see_mask = self.see_mask(forces, deltas, dists,
+                                 self.neighbSize)
+
+        sepforce = self.do_separate_v(see_mask, deltas, dists)
+
+        
+        cohforce = self.do_cohere_v(see_mask, deltas)
+        aliforce = self.do_align_v(see_mask, forces)
 
         # For moments where 
-        acceleration = self.clamp_norm(20 * sepforce + 2 * cohforce + 10*aliforce)
+        acceleration = self.clamp_norm(10 * sepforce + 5 * cohforce + 5*aliforce)
 
         # allforce = torch.nn.functional.normalize(allforce,dim=-1)
         forces = torch.nn.functional.normalize(forces + 10*dt*acceleration)
