@@ -65,18 +65,11 @@ class Boid(pg.sprite.Sprite):
                                                 randint(50, maxH - 50)))
         self.ang = randint(0, 360)  # random start angle, & position ^
         self.pos = pg.Vector2(self.rect.center)
-        self.data.array[self.bnum, :3] = torch.tensor(
-            [self.pos[0], self.pos[1], self.ang])
-        self.data.forces[self.bnum] = (2 * torch.rand((2, ))) - 1
-        self.data.boidz[self.bnum] = self
 
-    def draw_delta(self, delta):
-        pg.draw.line(self.drawSurf,
-                     self.color,
-                     self.pos,
-                     pg.Vector2(self.pos[0] + delta[0],
-                                self.pos[1] + delta[1]),
-                     width=1)
+        self.data.positions[self.bnum] = torch.tensor([self.pos[0], self.pos[1]])
+        self.data.angles[self.bnum] = self.ang
+        self.data.velocities[self.bnum] = (2 * torch.rand((2, ))) - 1
+        self.data.boidz[self.bnum] = self
 
     def draw_to(self, pos):
         pg.draw.line(self.drawSurf,
@@ -84,6 +77,10 @@ class Boid(pg.sprite.Sprite):
                      self.pos,
                      pg.Vector2(pos[0], pos[1]),
                      width=1)
+
+    def draw_delta(self, delta):
+        self.draw_to(pg.Vector2(self.pos[0] + delta[0],
+                                self.pos[1] + delta[1]))
 
     def average_force(self, force, affect_count):
         force_avg = force.sum(axis=1) / affect_count
@@ -97,15 +94,14 @@ class Boid(pg.sprite.Sprite):
 
         return deltas, dists
 
-    def see_mask(self, forces, deltas, dists, size, debug=False):
+    def see_mask(self, velocities, deltas, dists, size, debug=False):
 
         isNeighb = dists < size
 
         # Without vision, large flocks thats collide tend to merge
         # Whereas with vision, large flocks have some collective momentum
-        cos_sim = torch.nn.functional.cosine_similarity(deltas,
-                                                        forces.unsqueeze(1),
-                                                        dim=-1)
+        cos_sim = torch.nn.functional.cosine_similarity(
+            deltas, velocities.unsqueeze(1), dim=-1)
         # 180 degree vision
         canSee = (cos_sim > 0)
 
@@ -121,6 +117,12 @@ class Boid(pg.sprite.Sprite):
 
         return (isNeighb * self_attn).unsqueeze(-1), (canSee *
                                                       self_attn).unsqueeze(-1)
+
+    def clamp_norm(self, force):
+        norms = torch.linalg.norm(force, dim=-1, keepdim=True)
+        f_norm = torch.nan_to_num(force / norms, nan=0)
+        clamped_norm = torch.clamp(norms, min=0, max=1)
+        return f_norm * clamped_norm
 
     def sum_neighborhood_effect(self,
                                 see_mask,
@@ -164,40 +166,33 @@ class Boid(pg.sprite.Sprite):
                                             negative_deltas,
                                             use_vison=False)
 
-    def clamp_norm(self, force):
-        norms = torch.linalg.norm(force, dim=-1, keepdim=True)
-        f_norm = torch.nan_to_num(force / norms, nan=0)
-        clamped_norm = torch.clamp(norms, min=0, max=1)
-        return f_norm * clamped_norm
-
     def update(self, dt, speed, ejWrap=False):
         if self.bnum != 0:
             return
 
-        positions, forces = self.data.array[:, :2], self.data.forces
+        positions, velocities = self.data.positions[:, :
+                                                    2], self.data.velocities
 
         deltas, dists = self.deltas(positions)
 
-        see_mask = self.see_mask(forces, deltas, dists, self.neighbSize)
-
-        sep_mask = self.see_mask(forces, deltas, dists, self.sepSize)
-
+        sep_mask = self.see_mask(velocities, deltas, dists, self.sepSize)
         sepforce = self.do_separate_v(sep_mask, deltas, dists)
 
-        cohforce = self.sum_neighborhood_effect(see_mask, deltas)
-        aliforce = self.sum_neighborhood_effect(see_mask, forces)
+        coh_mask = self.see_mask(velocities, deltas, dists, self.neighbSize)
+        cohforce = self.sum_neighborhood_effect(coh_mask, deltas)
+        aliforce = self.sum_neighborhood_effect(coh_mask, velocities)
 
-        # For moments where
-        acceleration = self.clamp_norm((1) * sepforce + COHESION_F * cohforce +
-                                       (1 - COHESION_F) * aliforce)
+        # For moments where the velocities cancel out, it is useful to use
+        # clamp norm instead of normalize (so that the norm can be <1)
+        accel_norm = self.clamp_norm((1) * sepforce + COHESION_F * cohforce +
+                                     (1 - COHESION_F) * aliforce)
 
-        # allforce = torch.nn.functional.normalize(allforce,dim=-1)
-        forces = torch.nn.functional.normalize(forces + math.sqrt(speed) * dt *
-                                               acceleration)
+        acceleration = math.sqrt(speed) * dt * accel_norm
+        velocities = torch.nn.functional.normalize(velocities + acceleration)
 
-        positions += forces * dt * speed
+        positions += velocities * dt * speed
 
-        angles = torch.rad2deg(torch.atan2(forces[:, 1], forces[:, 0]))
+        angles = torch.rad2deg(torch.atan2(velocities[:, 1], velocities[:, 0]))
 
         maxW, maxH = self.drawSurf.get_size()
         # Wrap x
@@ -205,9 +200,9 @@ class Boid(pg.sprite.Sprite):
         # Wrap y
         positions[:, 1] = positions[:, 1] % maxH
 
-        self.data.array[:, :2] = positions
-        self.data.array[:, 2] = angles
-        self.data.forces = forces
+        self.data.positions = positions
+        self.data.angles = angles
+        self.data.velocities = velocities
 
         # Update data
         for i, b in enumerate(self.data.boidz):
@@ -217,11 +212,12 @@ class Boid(pg.sprite.Sprite):
             # b.draw_delta(acceleration[i]*100)
 
 
-class BoidArray():  # Holds array to store positions and angles
+class BoidArray():  # Holds positions to store positions and angles
 
     def __init__(self):
-        self.array = torch.zeros((BOIDZ, 3))
-        self.forces = torch.zeros((BOIDZ, 2))
+        self.positions = torch.zeros((BOIDZ, 2))
+        self.angles = torch.zeros((BOIDZ, 2))
+        self.velocities = torch.zeros((BOIDZ, 2))
         self.boidz = [None] * BOIDZ
 
 
