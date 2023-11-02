@@ -24,7 +24,7 @@ if DEBUG:
     BOIDZ = 150
     NEIGHBSIZE = 80
 else:
-    SPEED = 300
+    SPEED = 150
     FPS = 60
     BOIDZ = 300
     NEIGHBSIZE = 80
@@ -124,74 +124,43 @@ class Boid(pg.sprite.Sprite):
 
         return (isNeighb * self_attn).unsqueeze(-1), (canSee * self_attn).unsqueeze(-1)
 
-    def do_separate_v(self, see_mask, deltas, dists, debug=False):
+    def sum_neighborhood_effect(self,see_mask, effect, use_vison = True, debug=False):
         isNeighb, canSee = see_mask
 
+
+        canEffect = isNeighb
+        if use_vison:
+            canEffect = canEffect * canSee
+
+        effect_count = canEffect.sum(axis=0)
+        neighb_effect = effect * canEffect
+
+        neighb_effect_sum = self.average_force(neighb_effect, effect_count)
+
+        if debug:
+            i = 0
+            for j in range(len(self.data.boidz)):
+                if isNeighb[i, j]:
+                    self.draw_delta(neighb_effect[i, j])
+
+            for x, b in enumerate(self.data.boidz):
+                if affect_count[x]:
+                    b.draw_delta(neighb_effect_sum[x])
+
+        return self.clamp_norm(neighb_effect_sum)
+
+
+    def do_separate_v(self, see_mask, deltas, dists, debug=False):
+        # normdeltas represents a normalized vector from the boid's position towards all neighbors
         dists = dists.unsqueeze(-1)
         normdeltas = deltas / dists
-        inverse_negative = dists - self.sepSize
 
-        # Separation is not affected by vision.
-        neighb_deltas = deltas * isNeighb
-
-        # neighb_deltas points from the boid's position towards all neighbors,
-        # subtracting that value results in a repulsion
+        # subtracting that value from dists results in a repulsion
         # that is stronger for nearer neighbors.
-        negative_deltas = neighb_deltas * -1 * (inverse_negative * inverse_negative)
+        inverse_negative = dists - self.sepSize
+        negative_deltas = normdeltas * -1 * (inverse_negative * inverse_negative)
+        return self.sum_neighborhood_effect(see_mask,negative_deltas,use_vison=False)
 
-        affect_count = isNeighb.sum(axis=0)
-        away_from_neighb = self.average_force(negative_deltas, affect_count)
-
-        if debug:
-            i = 0
-            for j in range(len(self.data.boidz)):
-                if shouldSep[i, j]:
-                    self.draw_delta(negative_deltas[i, j])
-                    self.draw_delta(neighb_deltas[i, j])
-
-            for x, b in enumerate(self.data.boidz):
-                if affect_count[x]:
-                    b.draw_delta(away_from_neighb[x])
-
-        return self.clamp_norm(away_from_neighb)
-
-    def do_cohere_v(self, see_mask, deltas, debug=False):
-        isNeighb, canSee = see_mask
-        neighb_deltas = deltas * isNeighb * canSee
-
-        affect_count = isNeighb.sum(axis=0)
-        to_neighb_center = self.average_force(neighb_deltas, affect_count)
-
-        if debug:
-            i = 0
-            for j in range(len(self.data.boidz)):
-                if isNeighb[i, j]:
-                    self.draw_delta(neighb_deltas[i, j])
-
-            for x, b in enumerate(self.data.boidz):
-                if affect_count[x]:
-                    b.draw_delta(to_neighb_center[x])
-
-        return self.clamp_norm(to_neighb_center)
-
-    def do_align_v(self, see_mask, forces, debug=False):
-        isNeighb, canSee = see_mask
-
-        neighb_forces = forces * isNeighb * canSee
-        affect_count = isNeighb.sum(axis=0)
-        total_forces = self.average_force(neighb_forces, affect_count)
-
-        if debug:
-            i = 0
-            for j in range(len(self.data.boidz)):
-                if isNeighb[i, j]:
-                    self.draw_delta(neighb_forces[i, j] * 100)
-
-            for x, b in enumerate(self.data.boidz):
-                if affect_count[x]:
-                    b.draw_delta(total_forces[x] * 100)
-
-        return self.clamp_norm(total_forces)
 
     def clamp_norm(self,force):
         norms = torch.linalg.norm(force,dim=-1,keepdim=True)
@@ -217,8 +186,8 @@ class Boid(pg.sprite.Sprite):
         sepforce = self.do_separate_v(sep_mask, deltas, dists)
 
         
-        cohforce = self.do_cohere_v(see_mask, deltas)
-        aliforce = self.do_align_v(see_mask, forces)
+        cohforce = self.sum_neighborhood_effect(see_mask, deltas)
+        aliforce = self.sum_neighborhood_effect(see_mask, forces)
 
         # For moments where 
         acceleration = self.clamp_norm((1) * sepforce + COHESION_F * cohforce + (1-COHESION_F)*aliforce)
