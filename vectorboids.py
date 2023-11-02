@@ -16,8 +16,8 @@ HEIGHT = 800  # Window Height (800)
 BGCOLOR = (0, 0, 0)  # Background color in RGB
 SHOWFPS = True  # show frame rate
 
-SEPSIZE = 15
-bonus_factor = 2
+SEPSIZE = 20
+bonus_factor = 1
 
 DEBUG = False
 if DEBUG:
@@ -28,8 +28,8 @@ if DEBUG:
 else:
     SPEED = 80
     FPS = 60
-    BOIDZ = 30
-    NEIGHBSIZE = 120
+    BOIDZ = 200
+    NEIGHBSIZE = 60
 
 
 class Boid(pg.sprite.Sprite):
@@ -154,7 +154,7 @@ class Boid(pg.sprite.Sprite):
                 if affect_count[x]:
                     b.draw_delta(away_from_neighb[x])
 
-        return torch.nn.functional.normalize(away_from_neighb, dim=-1)
+        return self.clamp_norm(away_from_neighb)
 
     def do_cohere_v(self, forces, deltas, dists, debug=False):
         isNeighb = self.see_mask(forces, deltas, dists,
@@ -180,11 +180,11 @@ class Boid(pg.sprite.Sprite):
                 if affect_count[x]:
                     b.draw_delta(to_neighb_center[x])
 
-        return torch.nn.functional.normalize(to_neighb_center, dim=-1)
+        return self.clamp_norm(to_neighb_center)
 
     def do_align_v(self, forces, deltas, dists, debug=False):
         isNeighb = self.see_mask(forces, deltas, dists,
-                                 self.neighbSize, use_vision=False).unsqueeze(-1)
+                                 self.neighbSize).unsqueeze(-1)
 
         neighb_forces = forces * isNeighb
         affect_count = isNeighb.sum(axis=0)
@@ -200,7 +200,13 @@ class Boid(pg.sprite.Sprite):
                 if affect_count[x]:
                     b.draw_delta(total_forces[x] * 100)
 
-        return torch.nn.functional.normalize(total_forces, dim=-1)
+        return self.clamp_norm(total_forces)
+
+    def clamp_norm(self,force):
+        norms = torch.linalg.norm(force,dim=-1,keepdim=True)
+        f_norm = torch.nan_to_num(force/norms,nan=0)
+        clamped_norm = torch.clamp(norms,min=0,max=1)
+        return f_norm * clamped_norm
 
     def update(self, dt, speed, ejWrap=False):
         if self.bnum != 0:
@@ -214,10 +220,10 @@ class Boid(pg.sprite.Sprite):
         cohforce = self.do_cohere_v(forces, deltas, dists)
         aliforce = self.do_align_v(forces, deltas, dists)
 
-        allforce = 1 * forces + 10 * sepforce + 2 * cohforce + aliforce
-
-
-        allforce = torch.nn.functional.normalize(allforce, dim=-1)
+        allforce = self.clamp_norm(20 * sepforce + 2 * cohforce + 10*aliforce)
+        # allforce = torch.nn.functional.normalize(allforce,dim=-1)
+        allforce = torch.nn.functional.normalize(forces + dt*allforce)
+        
         positions += allforce * dt * speed
 
         angles = torch.rad2deg(torch.atan2(allforce[:, 1], allforce[:, 0]))
@@ -230,14 +236,13 @@ class Boid(pg.sprite.Sprite):
 
         self.data.array[:, :2] = positions
         self.data.array[:, 2] = angles
-        self.data.forces = forces
+        self.data.forces = allforce
 
         # Update data
         for i, b in enumerate(self.data.boidz):
             b.pos = pg.Vector2(positions[i, 0], positions[i, 1])
-            if False:
-                b.draw_delta(allforce[i] * 100)
-            b.draw_delta( 30*(10 * sepforce[i] + 2 * cohforce[i]))
+            # b.draw_delta( 30*(10 * sepforce[i] + 2 * cohforce[i]))
+            b.draw_delta(aliforce[i] * 100)
             b.rect.center = b.pos
             b.image = pg.transform.rotate(b.orig_image, -angles[i])
 
