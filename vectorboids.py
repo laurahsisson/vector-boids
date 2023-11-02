@@ -33,6 +33,7 @@ SEPSIZE = 30
 
 COHESION_F = .6
 
+
 class Boid(pg.sprite.Sprite):
 
     def __init__(self, boidNum, data, drawSurf, isFish=False, cHSV=None):
@@ -96,37 +97,37 @@ class Boid(pg.sprite.Sprite):
 
         return deltas, dists
 
-    def see_mask(self,
-                 forces,
-                 deltas,
-                 dists,
-                 size, debug=False):
+    def see_mask(self, forces, deltas, dists, size, debug=False):
 
         isNeighb = dists < size
 
         # Without vision, large flocks thats collide tend to merge
         # Whereas with vision, large flocks have some collective momentum
-        cos_sim = torch.nn.functional.cosine_similarity(deltas,forces.unsqueeze(1),
+        cos_sim = torch.nn.functional.cosine_similarity(deltas,
+                                                        forces.unsqueeze(1),
                                                         dim=-1)
         # 180 degree vision
         canSee = (cos_sim > 0)
 
         if debug:
-            d = isNeighb*canSee
+            d = isNeighb * canSee
             for i in range(len(deltas)):
                 for j in range(len(deltas)):
-                    if (d[i,j]):
-                        self.data.boidz[i].draw_delta(deltas[i,j])
-
+                    if (d[i, j]):
+                        self.data.boidz[i].draw_delta(deltas[i, j])
 
         # We should not be our own neighbor
         self_attn = 1 - torch.eye(len(deltas))
 
-        return (isNeighb * self_attn).unsqueeze(-1), (canSee * self_attn).unsqueeze(-1)
+        return (isNeighb * self_attn).unsqueeze(-1), (canSee *
+                                                      self_attn).unsqueeze(-1)
 
-    def sum_neighborhood_effect(self,see_mask, effect, use_vison = True, debug=False):
+    def sum_neighborhood_effect(self,
+                                see_mask,
+                                effect,
+                                use_vison=True,
+                                debug=False):
         isNeighb, canSee = see_mask
-
 
         canEffect = isNeighb
         if use_vison:
@@ -149,7 +150,6 @@ class Boid(pg.sprite.Sprite):
 
         return self.clamp_norm(neighb_effect_sum)
 
-
     def do_separate_v(self, see_mask, deltas, dists, debug=False):
         # normdeltas represents a normalized vector from the boid's position towards all neighbors
         dists = dists.unsqueeze(-1)
@@ -158,14 +158,16 @@ class Boid(pg.sprite.Sprite):
         # subtracting that value from dists results in a repulsion
         # that is stronger for nearer neighbors.
         inverse_negative = dists - self.sepSize
-        negative_deltas = normdeltas * -1 * (inverse_negative * inverse_negative)
-        return self.sum_neighborhood_effect(see_mask,negative_deltas,use_vison=False)
+        negative_deltas = normdeltas * -1 * (inverse_negative *
+                                             inverse_negative)
+        return self.sum_neighborhood_effect(see_mask,
+                                            negative_deltas,
+                                            use_vison=False)
 
-
-    def clamp_norm(self,force):
-        norms = torch.linalg.norm(force,dim=-1,keepdim=True)
-        f_norm = torch.nan_to_num(force/norms,nan=0)
-        clamped_norm = torch.clamp(norms,min=0,max=1)
+    def clamp_norm(self, force):
+        norms = torch.linalg.norm(force, dim=-1, keepdim=True)
+        f_norm = torch.nan_to_num(force / norms, nan=0)
+        clamped_norm = torch.clamp(norms, min=0, max=1)
         return f_norm * clamped_norm
 
     def update(self, dt, speed, ejWrap=False):
@@ -176,25 +178,23 @@ class Boid(pg.sprite.Sprite):
 
         deltas, dists = self.deltas(positions)
 
+        see_mask = self.see_mask(forces, deltas, dists, self.neighbSize)
 
-        see_mask = self.see_mask(forces, deltas, dists,
-                                 self.neighbSize)
-
-        sep_mask = self.see_mask(forces, deltas, dists,
-                                 self.sepSize)
+        sep_mask = self.see_mask(forces, deltas, dists, self.sepSize)
 
         sepforce = self.do_separate_v(sep_mask, deltas, dists)
 
-        
         cohforce = self.sum_neighborhood_effect(see_mask, deltas)
         aliforce = self.sum_neighborhood_effect(see_mask, forces)
 
-        # For moments where 
-        acceleration = self.clamp_norm((1) * sepforce + COHESION_F * cohforce + (1-COHESION_F)*aliforce)
+        # For moments where
+        acceleration = self.clamp_norm((1) * sepforce + COHESION_F * cohforce +
+                                       (1 - COHESION_F) * aliforce)
 
         # allforce = torch.nn.functional.normalize(allforce,dim=-1)
-        forces = torch.nn.functional.normalize(forces + math.sqrt(speed)*dt*acceleration)
-        
+        forces = torch.nn.functional.normalize(forces + math.sqrt(speed) * dt *
+                                               acceleration)
+
         positions += forces * dt * speed
 
         angles = torch.rad2deg(torch.atan2(forces[:, 1], forces[:, 0]))
