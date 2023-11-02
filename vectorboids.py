@@ -17,20 +17,19 @@ BGCOLOR = (0, 0, 0)     # Background color in RGB
 SHOWFPS = True         # show frame rate
 
 
-DEBUG = False
+SEPSIZE = 30
 
+DEBUG = False
 if DEBUG:
-    SPEED = 30            # Movement speed
+    SPEED = 0            # Movement speed
     FPS = 15                # 30-90
-    BOIDZ = 100
-    NEIGHBSIZE = 100000
-    SEPFORCE = 10000
+    BOIDZ = 50
+    NEIGHBSIZE = 80
 else:
     SPEED = 100
     FPS = 60
-    BOIDZ = 1000
-    NEIGHBSIZE = 80
-    SEPFORCE = 1000
+    BOIDZ = 30
+    NEIGHBSIZE = 120
 
 
 
@@ -51,6 +50,7 @@ class Boid(pg.sprite.Sprite):
             self.image = pg.transform.scale(self.image, (16, 24))
         else : pg.draw.polygon(self.image, self.color, ((7,0), (13,14), (7,11), (1,14), (7,0)))
         self.neighbSize = NEIGHBSIZE
+        self.sepSize = SEPSIZE
         self.orig_image = pg.transform.rotate(self.image.copy(), -90)
         self.dir = pg.Vector2(1, 0)  # sets up forward direction
         maxW, maxH = self.drawSurf.get_size()
@@ -74,14 +74,15 @@ class Boid(pg.sprite.Sprite):
         # Replace those with 0.0 so that we have no cohere force.
         return torch.nan_to_num(force_avg,nan=0.0)
 
-    def see_mask_v(self,positions,forces,debug=False):
+
+    def see_mask_v(self,positions,size,debug=False):
         deltas = positions.unsqueeze(0) - positions.unsqueeze(1)
         dists = torch.linalg.norm(deltas,axis=-1) + 1e-6
 
         # deltas i, j is delta from i to j (j.pos - i.pos)
         assert torch.all(deltas[0,1] == positions[1] - positions[0])
         
-        isNeighb = dists < self.neighbSize
+        isNeighb = dists < size
 
         # We should not be our own neighbor, or see our own selves.
         self_attn = 1 - torch.eye(len(deltas))
@@ -93,30 +94,37 @@ class Boid(pg.sprite.Sprite):
                 if isNeighb[i,j]:
                     self.draw_delta(deltas[i,j])
 
-            for x, b in enumerate(self.data.boidz):
-                b.draw_delta(forces[x])
-
         return (deltas, isNeighb.unsqueeze(-1), dists.unsqueeze(-1))
 
 
-    def do_separate_v(self, see_mask, positions, validate=False):
-        deltas, isNeighb, dists = see_mask
+    def do_separate_v(self, positions,debug=True):
+        deltas, isNeighb, dists = self.see_mask_v(positions,self.sepSize)
 
         normdeltas = deltas / dists
-        
-        if validate:
-            # Diagonals will all be 0, otherwise, the norm of the vectors will be 1.
-            norms = torch.linalg.norm(normdeltas,axis=-1)
-            assert torch.all(torch.logical_or(torch.isclose(norms,torch.tensor(1.0)), torch.isclose(norms,torch.tensor(0.0))))
+        inverse_negative = dists - self.sepSize
 
-        normdeltas = normdeltas * isNeighb      
+        neighb_deltas = deltas * isNeighb
+        # neighb_deltas points from the boid's position towards all neighbors,
+        # subtracting that value results in a repulsion
+        # that is stronger for nearer neighbors.
+        negative_deltas = neighb_deltas * inverse_negative
 
-        expdeltas = normdeltas / torch.square(dists)
+        affect_count = isNeighb.sum(axis=0)
+        away_from_neighb = self.average_force(negative_deltas,affect_count)
 
-        sepforce = -1*expdeltas.sum(axis=1)
+        if debug:
+            i = 0
+            for j in range(len(self.data.boidz)):
+                if isNeighb[i,j]:
+                    self.draw_delta(negative_deltas[i,j])
+                    self.draw_delta(neighb_deltas[i,j])
 
-        return sepforce
+            for x, b in enumerate(self.data.boidz):
+                if affect_count[x]:
+                    b.draw_delta(away_from_neighb[x])
 
+
+        return torch.nn.functional.normalize(away_from_neighb,dim=-1)
 
     def do_cohere_v(self, see_mask, positions, debug=False):
         deltas, isNeighb, dists = see_mask
@@ -162,13 +170,13 @@ class Boid(pg.sprite.Sprite):
             return
 
         positions, forces = self.data.array[:,:2], self.data.forces
-        see_mask = self.see_mask_v(positions,forces)
+        see_mask = self.see_mask_v(positions,self.neighbSize)
         
-        sepforce = self.do_separate_v(see_mask,positions)
+        sepforce = self.do_separate_v(positions)
         cohforce = self.do_cohere_v(see_mask, positions)
         aliforce = self.do_align_v(see_mask, positions, forces)
 
-        allforce = 5*forces + SEPFORCE*sepforce + 2*cohforce + aliforce
+        allforce = 5*forces + 10*sepforce + 2*cohforce + aliforce
  
         allforce = torch.nn.functional.normalize(allforce,dim=-1)
         positions += allforce * dt * speed
@@ -188,7 +196,7 @@ class Boid(pg.sprite.Sprite):
         # Update data
         for i, b in enumerate(self.data.boidz):
             b.pos = pg.Vector2(positions[i,0],positions[i,1])
-            if DEBUG:
+            if False:
                 b.draw_delta(allforce[i]*100)
             b.rect.center = b.pos
             b.image = pg.transform.rotate(b.orig_image, -angles[i])
