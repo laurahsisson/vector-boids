@@ -2,11 +2,11 @@ import torch
 
 class FlockEnsemble(object):
 
-    def __init__(self, speed, neighborhood_size, separation_size, cohesion_f):
+    def __init__(self, speed, neighborhood_radius, separation_radius, cohesion_f):
         self.speed = torch.tensor(speed)
 
-        self.neighb_radius = neighborhood_size
-        self.sep_radius = separation_size
+        self.neighb_radius = neighborhood_radius
+        self.sep_radius = separation_radius
 
         if cohesion_f < 0 or cohesion_f > 1:
             raise ValueError(
@@ -27,8 +27,8 @@ class FlockEnsemble(object):
 
         return deltas, dists
 
-    def _see_mask(self, velocities, weights, deltas, dists, size):
-        isNeighb = dists < size
+    def _see_mask(self, velocities, weights, deltas, dists, radius):
+        isNeighb = dists < radius
 
         # Without vision, large flocks thats collide tend to merge
         # Whereas with vision, large flocks have some collective momentum

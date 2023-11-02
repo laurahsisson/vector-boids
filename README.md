@@ -4,13 +4,13 @@
 ### A Python Boids Simulation
 This is a [Boids simulation](https://en.wikipedia.org/wiki/Boids 
 "Wikipedia"),
-written in Python3, with Pygame2 and NumPy.
+written in Python3 using Pygame2, vectorized with PyTorch.
 
-**To use:** Save the `pynboids_sp.py` file (and `nboids.png` if you want 
-the
-icon, not required) and run via python. (Example: `python3 pynboids.py`)
+**To use:** Run via python. (Example: `python3 vectorboids.py`)
 
 `Esc` key to quit.
+
+The framework
 
 I've included several customizable settings near the top of the code.  
 You can adjust window size, fullscreen, fps, and how many boids to spawn,

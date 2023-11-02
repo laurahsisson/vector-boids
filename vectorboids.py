@@ -7,8 +7,8 @@ import math
 import flocking
 '''
 VectorBoids - Multidimensional Boid Simulation in Pytorch
-Simulation by Laura Sisson
-Pygame Framework and UI by Nikolaus Stromberg
+Framework and UI by Nikolaus Stromberg
+Simulation code by Laura Sisson
 '''
 
 # UI SETTINGS
@@ -19,17 +19,17 @@ WIDTH = 1200  # Window Width (1200)
 HEIGHT = 800  # Window Height (800)
 BGCOLOR = (0, 0, 0)  # Background color in RGB
 FPS = 60
-SHOWFPS = True  # show frame rate
+SHOWFPS = False  # show frame rate
 SATURATION = 25 # For hsv of boids
 
 # SIMULATION SETTINGS
 SPEED = 150 # How quickly the boids move and accelerate
-BOIDZ = 800 # How many agents
+BOIDZ = 400 # How many agents
 
 # To avoid the curse of high-dimensionality, these will need to be
 # increased as the dimensionality of the space increases.
-NEIGHBSIZE = 80 # Boids try to cohere up to this distance
-SEPSIZE = 30 # Boids try to keep this amount of separation
+NEIGHBRADIUS = 80 # Boids try to cohere up to this distance
+SEPRADIUS = 30 # Boids try to keep this amount of separation
 
 # Weight balancing cohesion and alignment. The higher this value,
 # the more flocking is based on position as opposed to heading. 
@@ -134,7 +134,7 @@ class BoidArray():  # Holds positions to store positions and angles
         else:
             self.weights = torch.ones(BOIDZ)
         self.boidz = [None] * BOIDZ
-        self.flock_ensemble = flocking.FlockEnsemble(SPEED,NEIGHBSIZE,SEPSIZE,COHESION_F)
+        self.flock_ensemble = flocking.FlockEnsemble(SPEED,NEIGHBRADIUS,SEPRADIUS,COHESION_F)
 
 
 def main():
