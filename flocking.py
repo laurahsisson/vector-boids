@@ -5,8 +5,8 @@ class FlockEnsemble(object):
     def __init__(self, speed, neighborhood_size, separation_size, cohesion_f):
         self.speed = torch.tensor(speed)
 
-        self.neighb_size = neighborhood_size
-        self.sep_size = separation_size
+        self.neighb_radius = neighborhood_size
+        self.sep_radius = separation_size
 
         if cohesion_f < 0 or cohesion_f > 1:
             raise ValueError(
@@ -73,7 +73,7 @@ class FlockEnsemble(object):
 
         # subtracting that value from dists results in a repulsion
         # that is quadratically stronger for nearer neighbors.
-        inverse_negative = torch.abs(dists - self.sep_size)
+        inverse_negative = torch.abs(dists - self.sep_radius)
         negative_deltas = normdeltas * -1 * torch.square(inverse_negative)
         return self._sum_neighborhood_effect(see_mask,
                                             negative_deltas,
@@ -82,10 +82,10 @@ class FlockEnsemble(object):
     def calculate_acceleration_norm(self,positions, velocities):
         deltas, dists = self._deltas(positions)
 
-        sep_mask = self._see_mask(velocities, deltas, dists, self.sep_size)
+        sep_mask = self._see_mask(velocities, deltas, dists, self.sep_radius)
         sepforce = self._do_separate(sep_mask, deltas, dists)
 
-        coh_mask = self._see_mask(velocities, deltas, dists, self.neighb_size)
+        coh_mask = self._see_mask(velocities, deltas, dists, self.neighb_radius)
         cohforce = self._sum_neighborhood_effect(coh_mask, deltas, True)
         aliforce = self._sum_neighborhood_effect(coh_mask, velocities, True)
 

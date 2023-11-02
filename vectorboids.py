@@ -24,7 +24,10 @@ SATURATION = 25 # For hsv of boids
 
 # SIMULATION SETTINGS
 SPEED = 150 # How quickly the boids move and accelerate
-BOIDZ = 600 # How many agents
+BOIDZ = 400 # How many agents
+
+# To avoid the curse of high-dimensionality, these will need to be
+# increased as the dimensionality of the space increases.
 NEIGHBSIZE = 80 # Boids try to cohere up to this distance
 SEPSIZE = 30 # Boids try to keep this amount of separation
 
