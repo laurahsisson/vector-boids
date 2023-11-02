@@ -75,7 +75,6 @@ class Boid(pg.sprite.Sprite):
         return torch.nan_to_num(force_avg,nan=0.0)
 
     def see_mask_v(self,positions,forces,debug=False):
-        # Need to do like a diagonal 0.
         deltas = positions.unsqueeze(0) - positions.unsqueeze(1)
         dists = torch.linalg.norm(deltas,axis=-1) + 1e-6
 
@@ -121,13 +120,11 @@ class Boid(pg.sprite.Sprite):
 
     def do_cohere_v(self, see_mask, positions, debug=False):
         deltas, isNeighb, dists = see_mask
-
         
         neighb_deltas = deltas * isNeighb
 
         affect_count = isNeighb.sum(axis=0)
         to_neighb_center = self.average_force(neighb_deltas,affect_count)
-
 
         if debug:
             i = 0
