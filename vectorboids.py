@@ -20,6 +20,7 @@ HEIGHT = 800  # Window Height (800)
 BGCOLOR = (0, 0, 0)  # Background color in RGB
 FPS = 60
 SHOWFPS = True  # show frame rate
+SATURATION = 25 # For hsv of boids
 
 # SIMULATION SETTINGS
 SPEED = 150 # How quickly the boids move and accelerate
@@ -51,7 +52,7 @@ class Boid(pg.sprite.Sprite):
         self.image.set_colorkey(0)
         self.color = pg.Color(0)  # preps color so we can use hsva
         self.color.hsva = (
-            randint(0, 360), 25,
+            randint(0, 360), SATURATION,
             100) if cHSV is None else cHSV  # randint(5,55) #4goldfish
 
         if FISH:  # (randint(120,300) + 180) % 360  #4noblues
