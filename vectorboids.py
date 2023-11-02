@@ -5,34 +5,38 @@ import torch
 import numpy as np
 import math
 '''
-PyNBoids - a Boids simulation - github.com/Nikorasu/PyNBoids
-Uses numpy array math instead of math lib, more efficient.
-Copyright (c) 2021  Nikolaus Stromberg  nikorasu85@gmail.com
+VectorBoids - Multidimensional Boid Simulation in Pytorch
+Simulation by Laura Sisson
+Pygame Framework and UI by Nikolaus Stromberg
 '''
+
+# UI SETTINGS
 FLLSCRN = True  # True for Fullscreen, or False for Window
 WRAP = True  # False avoids edges, True wraps to other side
 FISH = False  # True to turn boids into fish
 WIDTH = 1200  # Window Width (1200)
 HEIGHT = 800  # Window Height (800)
 BGCOLOR = (0, 0, 0)  # Background color in RGB
+FPS = 60
 SHOWFPS = True  # show frame rate
 
-DEBUG = False
-if DEBUG:
-    SPEED = 0  # Movement speed
-    FPS = 15  # 30-90
-    BOIDZ = 150
-    NEIGHBSIZE = 80
-else:
-    SPEED = 150
-    FPS = 60
-    BOIDZ = 300
-    NEIGHBSIZE = 80
+# SIMULATION SETTINGS
+SPEED = 150 # How quickly the boids move and accelerate
+BOIDZ = 600 # How many agents
+NEIGHBSIZE = 80 # Boids try to cohere up to this distance
+SEPSIZE = 30 # Boids try to keep this amount of separation
 
-SEPSIZE = 30
+# Weight balancing cohesion and alignment. The higher this value,
+# the more flocking is based on position as opposed to heading. 
+COHESION_F = .8
+assert 0 <= COHESION_F and COHESION_F <= 1
 
-COHESION_F = .6
+DIMENSION = 2 # How many dimensions to simulate
+assert DIMENSION >= 2 # Does not support 1 dimensional simulations.
 
+# x and y are wrapped in the screen space.
+# higher dimensions are wrapped in a space from [-WRAP_EXTRA_DIM,WRAP_EXTRA_DIM]
+WRAP_EXTRA_DIM = 100 
 
 class Boid(pg.sprite.Sprite):
 
@@ -63,12 +67,14 @@ class Boid(pg.sprite.Sprite):
         maxW, maxH = self.drawSurf.get_size()
         self.rect = self.image.get_rect(center=(randint(50, maxW - 50),
                                                 randint(50, maxH - 50)))
-        self.ang = randint(0, 360)  # random start angle, & position ^
         self.pos = pg.Vector2(self.rect.center)
+        twod_pos = torch.tensor([self.pos[0], self.pos[1]])
 
-        self.data.positions[self.bnum] = torch.tensor([self.pos[0], self.pos[1]])
-        self.data.angles[self.bnum] = self.ang
-        self.data.velocities[self.bnum] = (2 * torch.rand((2, ))) - 1
+        random_dims = DIMENSION - 2
+        extra_pos = torch.rand(random_dims)
+        self.data.positions[self.bnum] = torch.cat([twod_pos,extra_pos])
+
+        self.data.velocities[self.bnum] = (2 * torch.rand((DIMENSION, ))) - 1
         self.data.boidz[self.bnum] = self
 
     def draw_to(self, pos):
@@ -166,12 +172,11 @@ class Boid(pg.sprite.Sprite):
                                             negative_deltas,
                                             use_vison=False)
 
-    def update(self, dt, speed, ejWrap=False):
+    def update(self, dt, speed):
         if self.bnum != 0:
             return
 
-        positions, velocities = self.data.positions[:, :
-                                                    2], self.data.velocities
+        positions, velocities = self.data.positions, self.data.velocities
 
         deltas, dists = self.deltas(positions)
 
@@ -199,9 +204,10 @@ class Boid(pg.sprite.Sprite):
         positions[:, 0] = positions[:, 0] % maxW
         # Wrap y
         positions[:, 1] = positions[:, 1] % maxH
+        # Wrap higher dimensions
+        positions[:, 2:] = positions[:, 2:] % WRAP_EXTRA_DIM
 
         self.data.positions = positions
-        self.data.angles = angles
         self.data.velocities = velocities
 
         # Update data
@@ -209,15 +215,13 @@ class Boid(pg.sprite.Sprite):
             b.pos = pg.Vector2(positions[i, 0], positions[i, 1])
             b.rect.center = b.pos
             b.image = pg.transform.rotate(b.orig_image, -angles[i])
-            # b.draw_delta(acceleration[i]*100)
 
 
 class BoidArray():  # Holds positions to store positions and angles
 
     def __init__(self):
-        self.positions = torch.zeros((BOIDZ, 2))
-        self.angles = torch.zeros((BOIDZ, 2))
-        self.velocities = torch.zeros((BOIDZ, 2))
+        self.positions = torch.zeros((BOIDZ, DIMENSION))
+        self.velocities = torch.zeros((BOIDZ, DIMENSION))
         self.boidz = [None] * BOIDZ
 
 
@@ -253,7 +257,7 @@ def main():
 
         dt = clock.tick(FPS) / 1000
         screen.fill(BGCOLOR)
-        nBoids.update(dt, SPEED, WRAP)
+        nBoids.update(dt, SPEED)
         nBoids.draw(screen)
 
         if SHOWFPS:
