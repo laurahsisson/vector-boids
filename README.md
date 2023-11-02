@@ -1,5 +1,5 @@
 # PyNBoids
-![Preview](preview.gif "Preview")
+<img src="/preview.gif" width="250" height="200"/>
 
 ### A Python Boids Simulation
 This is a [Boids simulation](https://en.wikipedia.org/wiki/Boids 
