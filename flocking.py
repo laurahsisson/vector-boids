@@ -27,7 +27,7 @@ class FlockEnsemble(object):
 
         return deltas, dists
 
-    def _see_mask(self, velocities, deltas, dists, size):
+    def _see_mask(self, velocities, weights, deltas, dists, size):
         isNeighb = dists < size
 
         # Without vision, large flocks thats collide tend to merge
@@ -40,7 +40,11 @@ class FlockEnsemble(object):
         # Boids should not affect our themselves, so mask out diagonals.
         self_attn = 1 - torch.eye(len(deltas))
 
-        return (isNeighb * self_attn).unsqueeze(-1), (canSee *
+        # Forces are summed up by neighborhood, so to weight
+        # those forces we use a weighted neighborhood mask.
+        weight_matrix = weights.unsqueeze(0)*weights.unsqueeze(1)
+        weighted_isNeighb = isNeighb * weight_matrix
+        return (weighted_isNeighb * self_attn).unsqueeze(-1), (canSee *
                                                       self_attn).unsqueeze(-1)
 
     def _clamp_norm(self, force):
@@ -79,25 +83,30 @@ class FlockEnsemble(object):
                                             negative_deltas,
                                             False)
 
-    def calculate_acceleration_norm(self,positions, velocities):
+    def calculate_acceleration_norm(self, positions, velocities, weights):
         deltas, dists = self._deltas(positions)
 
-        sep_mask = self._see_mask(velocities, deltas, dists, self.sep_radius)
+        sep_mask = self._see_mask(velocities, weights, deltas, dists, self.sep_radius)
         sepforce = self._do_separate(sep_mask, deltas, dists)
 
-        coh_mask = self._see_mask(velocities, deltas, dists, self.neighb_radius)
+        coh_mask = self._see_mask(velocities, weights, deltas, dists, self.neighb_radius)
         cohforce = self._sum_neighborhood_effect(coh_mask, deltas, True)
         aliforce = self._sum_neighborhood_effect(coh_mask, velocities, True)
 
         # For moments where the velocities cancel out, it is useful to use
         # clamp norm instead of normalize (so that the norm can be <1)
-        accel_norm = self._clamp_norm(1 * sepforce + self.cohesion_f * cohforce +
+        accel_norm = torch.nn.functional.normalize(1 * sepforce + self.cohesion_f * cohforce +
                                      self.alignment_f * aliforce)
 
         return accel_norm
 
-    def do_physics_step(self,positions,velocities,dt):
-        accel_norm = self.calculate_acceleration_norm(positions,velocities)
+    def do_physics_step(self,positions,velocities,weights=None,dt=.2):
+        if not torch.is_tensor(weights):
+            weights = torch.ones(len(positions))
+
+        weights = weights / torch.max(weights)
+        accel_norm = self.calculate_acceleration_norm(positions,velocities,weights)
+
 
         # Boids travel at a constant velocity, so velocity is normalized.
         velocities = torch.nn.functional.normalize(velocities + accel_norm * dt * torch.sqrt(self.speed))

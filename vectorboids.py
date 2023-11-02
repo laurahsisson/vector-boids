@@ -24,7 +24,7 @@ SATURATION = 25 # For hsv of boids
 
 # SIMULATION SETTINGS
 SPEED = 150 # How quickly the boids move and accelerate
-BOIDZ = 400 # How many agents
+BOIDZ = 800 # How many agents
 
 # To avoid the curse of high-dimensionality, these will need to be
 # increased as the dimensionality of the space increases.
@@ -42,6 +42,8 @@ assert DIMENSION >= 2 # Does not support 1 dimensional simulations.
 # x and y are wrapped in the screen space.
 # higher dimensions are wrapped in a space from [-WRAP_EXTRA_DIM,WRAP_EXTRA_DIM]
 WRAP_EXTRA_DIM = 100 
+
+RANDOM_WEIGHTS = True # Boids will have varying weights.
 
 class Boid(pg.sprite.Sprite):
 
@@ -68,6 +70,11 @@ class Boid(pg.sprite.Sprite):
             pg.draw.polygon(self.image, self.color,
                             ((7, 0), (13, 14), (7, 11), (1, 14), (7, 0)))
 
+        # Some visual consistency is desirable.
+        # So boids with very low weight should still be visible.
+        scale = 1.2*max(math.sqrt(self.data.weights[self.bnum].item()),.7)
+        self.image = pg.transform.scale(self.image, (self.image.get_width()*scale,self.image.get_height()*scale))
+        
         self.orig_image = pg.transform.rotate(self.image.copy(), -90)
         maxW, maxH = self.drawSurf.get_size()
         self.rect = self.image.get_rect(center=(randint(50, maxW - 50),
@@ -96,7 +103,7 @@ class Boid(pg.sprite.Sprite):
         if self.bnum != 0:
             return
 
-        positions, velocities = self.data.flock_ensemble.do_physics_step(self.data.positions,self.data.velocities,dt)
+        positions, velocities = self.data.flock_ensemble.do_physics_step(self.data.positions,self.data.velocities,weights=self.data.weights,dt=dt)
 
         angles = torch.rad2deg(torch.atan2(velocities[:, 1], velocities[:, 0]))
 
@@ -122,6 +129,10 @@ class BoidArray():  # Holds positions to store positions and angles
     def __init__(self):
         self.positions = torch.zeros((BOIDZ, DIMENSION))
         self.velocities = torch.zeros((BOIDZ, DIMENSION))
+        if RANDOM_WEIGHTS:
+            self.weights = torch.rand(BOIDZ)
+        else:
+            self.weights = torch.ones(BOIDZ)
         self.boidz = [None] * BOIDZ
         self.flock_ensemble = flocking.FlockEnsemble(SPEED,NEIGHBSIZE,SEPSIZE,COHESION_F)
 
