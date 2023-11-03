@@ -2,7 +2,7 @@ import torch
 
 class FlockEnsemble(object):
 
-    def __init__(self, speed, neighborhood_radius, separation_radius, cohesion_f):
+    def __init__(self, speed, neighborhood_radius, separation_radius, cohesion_f, use_vison=True):
         self.speed = torch.tensor(speed)
 
         self.neighb_radius = neighborhood_radius
@@ -13,6 +13,7 @@ class FlockEnsemble(object):
                 f"cohesion factor must be in [0,1] but got {cohesion_f}")
         self.cohesion_f = cohesion_f
         self.alignment_f = 1 - cohesion_f
+        self.use_vison = use_vison
 
 
     def _average_force(self, force, affect_count):
@@ -90,8 +91,8 @@ class FlockEnsemble(object):
         sepforce = self._do_separate(sep_mask, deltas, dists)
 
         coh_mask = self._see_mask(velocities, weights, deltas, dists, self.neighb_radius)
-        cohforce = self._sum_neighborhood_effect(coh_mask, deltas, True)
-        aliforce = self._sum_neighborhood_effect(coh_mask, velocities, True)
+        cohforce = self._sum_neighborhood_effect(coh_mask, deltas, self.use_vison)
+        aliforce = self._sum_neighborhood_effect(coh_mask, velocities, self.use_vison)
 
         # For moments where the velocities cancel out, it is useful to use
         # clamp norm instead of normalize (so that the norm can be <1)
@@ -100,10 +101,11 @@ class FlockEnsemble(object):
 
         return accel_norm
 
-    def do_physics_step(self,positions,velocities,weights=None,dt=.2):
+    def do_physics_step(self,positions,velocities,weights=None,dt=.01):
         if not torch.is_tensor(weights):
             weights = torch.ones(len(positions))
 
+        # TODO: the velocities should be normalized before doing any math on them
         weights = weights / torch.max(weights)
         accel_norm = self.calculate_acceleration_norm(positions,velocities,weights)
 
