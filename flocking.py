@@ -2,7 +2,7 @@ import torch
 
 class FlockEnsemble(object):
 
-    def __init__(self, speed, neighborhood_radius, separation_radius, cohesion_f, use_vison=True):
+    def __init__(self, speed, neighborhood_radius, separation_radius, cohesion_f, use_vision=True):
         self.speed = torch.tensor(speed)
 
         self.neighb_radius = neighborhood_radius
@@ -13,7 +13,7 @@ class FlockEnsemble(object):
                 f"cohesion factor must be in [0,1] but got {cohesion_f}")
         self.cohesion_f = cohesion_f
         self.alignment_f = 1 - cohesion_f
-        self.use_vison = use_vison
+        self.use_vision = use_vision
 
 
     def _average_force(self, force, affect_count):
@@ -57,11 +57,11 @@ class FlockEnsemble(object):
     def _sum_neighborhood_effect(self,
                                 see_mask,
                                 effect,
-                                use_vison):
+                                use_vision):
         isNeighb, canSee = see_mask
 
         canEffect = isNeighb
-        if use_vison:
+        if use_vision:
             canEffect = canEffect * canSee
 
         effect_count = canEffect.sum(axis=0)
@@ -91,8 +91,8 @@ class FlockEnsemble(object):
         sepforce = self._do_separate(sep_mask, deltas, dists)
 
         coh_mask = self._see_mask(velocities, weights, deltas, dists, self.neighb_radius)
-        cohforce = self._sum_neighborhood_effect(coh_mask, deltas, self.use_vison)
-        aliforce = self._sum_neighborhood_effect(coh_mask, velocities, self.use_vison)
+        cohforce = self._sum_neighborhood_effect(coh_mask, deltas, self.use_vision)
+        aliforce = self._sum_neighborhood_effect(coh_mask, velocities, self.use_vision)
 
         # For moments where the velocities cancel out, it is useful to use
         # clamp norm instead of normalize (so that the norm can be <1)
