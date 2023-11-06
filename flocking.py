@@ -1,8 +1,6 @@
-import torch
-
 class FlockEnsemble(object):
 
-    def __init__(self, speed, neighborhood_radius, separation_radius, cohesion_f, use_vision=True):
+    def __init__(self, speed, neighborhood_radius, separation_radius, cohesion_f, use_vision=True, device="cpu"):
         self.speed = torch.tensor(speed)
 
         self.neighb_radius = neighborhood_radius
@@ -14,7 +12,7 @@ class FlockEnsemble(object):
         self.cohesion_f = cohesion_f
         self.alignment_f = 1 - cohesion_f
         self.use_vision = use_vision
-
+        self.device = device
 
     def _average_force(self, force, affect_count):
         force_avg = force.sum(axis=1) / affect_count
@@ -39,7 +37,7 @@ class FlockEnsemble(object):
         canSee = (cos_sim > 0)
 
         # Boids should not affect our themselves, so mask out diagonals.
-        self_attn = 1 - torch.eye(len(deltas))
+        self_attn = 1 - torch.eye(len(deltas),device=self.device)
 
         # Forces are summed up by neighborhood, so to weight
         # those forces we use a weighted neighborhood mask.
@@ -103,7 +101,7 @@ class FlockEnsemble(object):
 
     def do_physics_step(self,positions,velocities,weights=None,dt=.01):
         if not torch.is_tensor(weights):
-            weights = torch.ones(len(positions))
+            weights = torch.ones(len(positions),device=self.device)
 
         # TODO: the velocities should be normalized before doing any math on them
         weights = weights / torch.max(weights)
@@ -115,4 +113,3 @@ class FlockEnsemble(object):
         positions = positions + velocities * dt * self.speed
 
         return positions, velocities
-
