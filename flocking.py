@@ -1,3 +1,4 @@
+import torch
 class FlockEnsemble(object):
 
     def __init__(self, speed, neighborhood_radius, separation_radius, cohesion_f, use_vision=True, device="cpu"):
