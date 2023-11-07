@@ -34,8 +34,11 @@ class FlockEnsemble(object):
         # Whereas with vision, large flocks have some collective momentum
         cos_sim = torch.nn.functional.cosine_similarity(
             deltas, velocities.unsqueeze(1), dim=-1)
-        # 180 degree vision
-        canSee = (cos_sim > 0)
+        
+        # 180 degree vision. 
+        # For stationary boids, cosine similarity will be 0 for all vectors,
+        # so those boids will have 360 degree vision until they start moving.
+        canSee = (cos_sim >= 0)
 
         # Boids should not affect our themselves, so mask out diagonals.
         self_attn = 1 - torch.eye(len(deltas),device=self.device)

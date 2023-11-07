@@ -19,8 +19,9 @@ WIDTH = 1200  # Window Width (1200)
 HEIGHT = 800  # Window Height (800)
 BGCOLOR = (0, 0, 0)  # Background color in RGB
 FPS = 60
-SHOWFPS = False  # show frame rate
+SHOWFPS = True  # show frame rate
 SATURATION = 25 # For hsv of boids
+SIZE = 1.2 # How large (visually) the boids should be
 
 # SIMULATION SETTINGS
 SPEED = 150 # How quickly the boids move and accelerate
@@ -43,7 +44,8 @@ assert DIMENSION >= 2 # Does not support 1 dimensional simulations.
 # higher dimensions are wrapped in a space from [-WRAP_EXTRA_DIM,WRAP_EXTRA_DIM]
 WRAP_EXTRA_DIM = 100 
 
-RANDOM_WEIGHTS = True # Boids will have varying weights.
+RANDOM_WEIGHTS = True # Boids will have varying mass and size.
+INIT_VELOCITY = True # Boids will start with a random velocity.
 
 class Boid(pg.sprite.Sprite):
 
@@ -72,7 +74,7 @@ class Boid(pg.sprite.Sprite):
 
         # Some visual consistency is desirable.
         # So boids with very low weight should still be visible.
-        scale = 1.2*max(math.sqrt(self.data.weights[self.bnum].item()),.7)
+        scale = SIZE*max(math.sqrt(self.data.weights[self.bnum].item()),.7)
         self.image = pg.transform.scale(self.image, (self.image.get_width()*scale,self.image.get_height()*scale))
         
         self.orig_image = pg.transform.rotate(self.image.copy(), -90)
@@ -83,7 +85,8 @@ class Boid(pg.sprite.Sprite):
         higher_dim_pos = torch.rand(DIMENSION - 2)
 
         self.data.positions[self.bnum] = torch.cat([two_dim_pos,higher_dim_pos])
-        self.data.velocities[self.bnum] = (2 * torch.rand((DIMENSION, ))) - 1
+        if INIT_VELOCITY:
+            self.data.velocities[self.bnum] = (2 * torch.rand((DIMENSION, ))) - 1
         self.data.boidz[self.bnum] = self
 
     def draw_to(self, pos):
